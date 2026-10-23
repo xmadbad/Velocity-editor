@@ -16,7 +16,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_notification::NotificationExt;
 
 const WIDTH: f64 = 320.0;
-const TFL: &str = "https://api.tfl.gov.uk/";
+// JS'in Rust üzerinden gidebileceği adresler (TfL ve Lime'ın açık bisiklet akışı).
+const ALLOWED: [&str; 2] = ["https://api.tfl.gov.uk/", "https://data.lime.bike/"];
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -62,11 +63,11 @@ fn save_placement_loop(app: AppHandle) {
     }
 }
 
-// Webview'den fetch başarısız olursa (CORS, kurumsal proxy vb.) TfL'ye buradan gidilir.
+// Webview'den fetch başarısız olursa (CORS, kurumsal proxy vb.) buradan gidilir.
 #[tauri::command]
-async fn tfl_get(url: String) -> Result<String, String> {
-    if !url.starts_with(TFL) {
-        return Err("yalnızca api.tfl.gov.uk".into());
+async fn http_get(url: String) -> Result<String, String> {
+    if !ALLOWED.iter().any(|prefix| url.starts_with(prefix)) {
+        return Err("izin verilmeyen adres".into());
     }
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     let client = CLIENT.get_or_init(|| {
@@ -365,7 +366,7 @@ fn main() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
-            tfl_get,
+            http_get,
             locate,
             notify,
             autostart,

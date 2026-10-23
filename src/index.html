@@ -33,6 +33,10 @@
           <div id="status-reason" class="status-reason"></div>
         </div>
         <p id="insight" class="insight" hidden></p>
+        <div id="bike" class="bike" hidden>
+          <div id="bike-title" class="bike-title"></div>
+          <div id="bike-sub" class="bike-sub"></div>
+        </div>
         <h3>Sıradaki trenler <small id="route"></small></h3>
         <p id="where" class="where"></p>
         <ol id="trains" class="trains"></ol>
@@ -56,6 +60,10 @@
         </div>
         <label class="check"><input type="checkbox" name="useLocation"> 📍 Konumumu kullan</label>
         <p class="hint">Açıkken en yakın duraktan kalkarsın, yürüme süresi mesafeden hesaplanır; evdeysen yön işe döner. Sabah çıkışı boş kalabilir.</p>
+        <label class="check"><input type="checkbox" name="bike"> 🚲 Lime/Voi e-bisikletle kıyasla</label>
+        <label><span>Ev posta kodu <small>· isteğe bağlı, kapıdan kapıya süre için</small></span>
+          <input name="postcode" placeholder="ör. SE18 6HQ" autocapitalize="characters" spellcheck="false">
+        </label>
         <div class="two">
           <label title="Genelde kaçta işten çıkıyorsun?"><span>Akşam çıkışım</span>
             <input name="leave" type="time" required>

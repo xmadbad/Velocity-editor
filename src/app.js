@@ -1,12 +1,14 @@
 // Lizzie arayüzü: TfL'yi yoklar, hapı ve paneli çizer, hatırlatır, değişince haber verir.
 import {
-  DEFAULTS, LEVEL_TEXT, MAX_ACCURACY_M, MIN, Tracker, atTime, atToday, buildRoutes, chooseTrip,
-  dayMode, fmtDuration, fmtTime, insight, nameIndex, parseStatus, plan, stationsFromStopPoints,
-  trainsForTrip,
+  BIKE_OVERHEAD_MIN, DEFAULTS, LEVEL_TEXT, MAX_ACCURACY_M, MIN, Tracker, atTime, atToday,
+  bestJourney, bikeVerdict, buildRoutes, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
+  nameIndex, nearbyVehicles, parseStatus, plan, stationsFromStopPoints, trainsForTrip,
 } from './logic.js';
 import { FACE_SVG, MINI_TRAIN } from './face.js';
 
 const API = 'https://api.tfl.gov.uk';
+// Lime'ın şehir başına açık GBFS akışı. Londra için yayınlanmıyorsa sessizce vazgeçilir.
+const LIME_GBFS = 'https://data.lime.bike/api/partners/v2/gbfs/london/gbfs.json';
 const DAY = 24 * 60 * MIN;
 const SPAN = 30; // zaman çizelgesi kaç dakikalık
 const STATE_TEXT = { relaxed: 'rahat', now: 'şimdi', run: 'koş!' };
@@ -63,6 +65,8 @@ const state = {
   pos: null, // { lat, lon, accuracy }
   posAt: 0,
   posError: '', // '' | 'denied' | 'vague' | 'unavailable'
+  bike: null, // { key, bikeMin, trainMin, departAt, error }: TfL rota planlayıcısından
+  lime: null, // yakındaki Lime araçları (akış varsa)
   status: null, // parseStatus sonucu
   fetchedAt: 0,
   statusAt: 0,
@@ -75,17 +79,20 @@ const state = {
 
 // ------------------------------------------------------------------ TfL
 
-async function tfl(path) {
-  const sep = path.includes('?') ? '&' : '?';
-  const url = API + path + (settings.appKey ? `${sep}app_key=${encodeURIComponent(settings.appKey)}` : '');
+async function getJSON(url, label) {
   try {
     const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw Object.assign(new Error(`TfL HTTP ${res.status}`), { http: res.status });
+    if (!res.ok) throw Object.assign(new Error(`${label} HTTP ${res.status}`), { http: res.status });
     return await res.json();
   } catch (e) {
     if (e.http || !invoke) throw e;
-    return JSON.parse(await invoke('tfl_get', { url })); // webview'den olmadıysa Rust'tan dene
+    return JSON.parse(await invoke('http_get', { url })); // webview'den olmadıysa Rust'tan dene
   }
+}
+
+function tfl(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return getJSON(API + path + (settings.appKey ? `${sep}app_key=${encodeURIComponent(settings.appKey)}` : ''), 'TfL');
 }
 
 async function ensureStations(force = false) {
@@ -181,6 +188,83 @@ function journey(now = Date.now()) {
   return j;
 }
 const journeyKey = (j) => `${j.from.id}>${j.to?.id || ''}`;
+
+// ------------------------------------------------------------------ e-bisiklet (Lime / Voi)
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const place = (s) => encodeURIComponent(s).replace(/%2C/gi, ',');
+
+// Lime/Voi canlı konumları açık olmadığı için süreyi TfL'nin bisiklet rotasından alırız
+// ("hızlı" sürücü ≈ e-bisiklet) ve aynı çıkış saati için trenle kıyaslarız.
+let loadingBike = false;
+async function refreshBike() {
+  if (!settings.bike || !configured() || loadingBike) return;
+  const now = Date.now();
+  const j = journey(now);
+  if (!j.to) return;
+  loadingBike = true;
+  const from = j.source === 'location' && state.pos ? `${state.pos.lat.toFixed(5)},${state.pos.lon.toFixed(5)}` : j.from.id;
+  const to = j.dir === 'home' && settings.homePostcode ? settings.homePostcode.replace(/\s+/g, '') : j.to.id;
+  const target = currentPlan(now, j)?.target;
+  const departAt = target && target.leaveBy > now ? target.leaveBy : now;
+  const d = new Date(departAt);
+  const when = `date=${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}&time=${pad2(d.getHours())}${pad2(d.getMinutes())}&timeIs=Departing`;
+  const base = `/Journey/JourneyResults/${place(from)}/to/${place(to)}?${when}`;
+  const info = { key: journeyKey(j), departAt, bikeMin: NaN, trainMin: NaN, error: '' };
+  try {
+    const [cycle, train] = await Promise.all([
+      tfl(`${base}&mode=cycle&cyclePreference=AllTheWay&bikeProficiency=Fast`),
+      tfl(`${base}&mode=elizabeth-line,walking`).catch(() => null),
+    ]);
+    const bike = bestJourney(cycle);
+    const rail = bestJourney(train, 'elizabeth-line');
+    info.bikeMin = bike ? bike.duration + BIKE_OVERHEAD_MIN : NaN;
+    info.trainMin = rail ? rail.duration : NaN;
+    if (!bike) info.error = 'bisiklet rotası bulunamadı';
+  } catch (e) {
+    info.error = /HTTP 300/.test(String(e.message)) ? 'TfL posta kodunu tanımadı' : friendlyError(e);
+  } finally {
+    state.bike = info;
+    loadingBike = false;
+    watchBike();
+    render();
+  }
+}
+
+function currentBike(now = Date.now()) {
+  const b = state.bike;
+  if (!settings.bike || !b || b.error || b.key !== journeyKey(journey(now))) return null;
+  return bikeVerdict(b.bikeMin, b.trainMin, state.status?.level);
+}
+
+let loadingLime = false;
+async function refreshLime() {
+  if (!settings.bike || !state.pos || loadingLime || store.get('limeOff', 0) > Date.now()) return;
+  loadingLime = true;
+  try {
+    const index = await getJSON(LIME_GBFS, 'Lime');
+    const data = index?.data || {};
+    const feeds = data.feeds || Object.values(data)[0]?.feeds || [];
+    const url = feeds.find((f) => f.name === 'free_bike_status' || f.name === 'vehicle_status')?.url;
+    if (!url) throw new Error('Lime akışı yok');
+    state.lime = nearbyVehicles(await getJSON(url, 'Lime'), state.pos);
+  } catch {
+    state.lime = null;
+    store.set('limeOff', Date.now() + DAY); // Londra akışı yok: yarın yine dene
+  } finally {
+    loadingLime = false;
+    render();
+  }
+}
+
+function watchBike() {
+  const v = currentBike();
+  const level = state.status?.level;
+  if (!v?.suggest || !isLive() || !(level === 'bad' || level === 'closed') || !once(`bike:${today()}`)) return;
+  const where = journey().dir === 'work' ? 'İşe' : 'Eve';
+  const train = Number.isFinite(v.trainMin) ? `, trenle ~${v.trainMin} dk` : '';
+  say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${v.bikeMin} dk${train}.`);
+}
 const tripSettings = (j) => ({ ...settings, walkMin: j.walkMin, leaveAt: j.leaveAt });
 
 function whereText(j) {
@@ -275,6 +359,7 @@ function watchStatus() {
   if (prev === null && s.level === 'good') return;
   if (s.level === 'good') say('✨ Elizabeth line düzeldi', 'Hat yeniden iyi serviste. Plan normale döndü.');
   else say(`${s.level === 'minor' ? '😿' : '🚨'} Elizabeth line: ${LEVEL_TEXT[s.level]}`, s.reason || s.desc);
+  nextBike = 0; // hat bozulduysa bisiklet seçeneğini hemen tazele
 }
 
 // ------------------------------------------------------------------ çizim
@@ -320,11 +405,16 @@ function pillModel(now) {
     if (p.early && p.list.length) {
       return { headline: `${goal} ${fmtTime(L)}`, sub: 'Tahminler yaklaşınca netleşecek', badge: shortDuration((L - now) / MIN), badgeClass: 's-idle', kind: 'calm', plan: p };
     }
-    return { headline: 'Tren görünmüyor 🤔', sub: state.error || statusLine, kind: 'worried', plan: p };
+    const v = currentBike(now);
+    const sub = v ? `🚲 Lime/Voi ile ~${v.bikeMin} dk` : state.error || statusLine;
+    return { headline: 'Tren görünmüyor 🤔', sub, kind: 'worried', plan: p };
   }
 
   const stale = state.error && now - state.fetchedAt > 3 * MIN ? `📡 ${state.error} · ${ago(now - state.fetchedAt)}` : '';
-  const where = stale || `${fmtTime(t.time)} treni → ${t.dest}${t.platform ? ` · Peron ${t.platform}` : ''}`;
+  const v = currentBike(now);
+  const troubled = ['bad', 'closed'].includes(state.status?.level);
+  const bikeHint = v?.suggest && troubled ? `🚲 Hat sorunlu · Lime/Voi ile ~${v.bikeMin} dk` : '';
+  const where = stale || bikeHint || `${fmtTime(t.time)} treni → ${t.dest}${t.platform ? ` · Peron ${t.platform}` : ''}`;
   if (t.state === 'run') {
     const sub = p.alt ? `Yetişemezsen: ${fmtTime(p.alt.time)} (${atTime(p.alt.leaveBy)} çık)` : where;
     return { headline: 'Koş, yetişirsin! 🏃', sub, badge: 'hemen', badgeClass: 's-run', kind: 'alert', shake: true, plan: p };
@@ -434,6 +524,7 @@ function renderMain(now, m) {
   const tip = p ? insight(p) : '';
   $('insight').hidden = !tip;
   setText($('insight'), tip ? `💡 ${tip}` : '');
+  renderBike(now, j);
 
   const rows = (p?.list || []).slice(0, 6).map((t) => `
     <li class="s-${t.state}${p.target?.key === t.key ? ' is-target' : ''}">
@@ -452,6 +543,31 @@ function renderMain(now, m) {
   if (state.arr) parts.push(`${state.arr.total} tahmin, ${state.arr.trains.length} uygun`);
   if (state.error) parts.push(state.error);
   setText($('updated'), parts.join(' · '));
+}
+
+function renderBike(now, j) {
+  const b = state.bike;
+  const v = currentBike(now);
+  const card = $('bike');
+  card.hidden = !settings.bike || !configured() || (!v && !b?.error);
+  if (card.hidden) return;
+  card.classList.toggle('suggest', Boolean(v?.suggest));
+  if (!v) {
+    setText($('bike-title'), `🚲 E-bisiklet: ${b.error}`);
+    setText($('bike-sub'), '');
+    return;
+  }
+  const train = Number.isFinite(v.trainMin) ? ` · 🚆 Tren ~${v.trainMin} dk` : '';
+  setText($('bike-title'), `🚲 Lime/Voi ~${v.bikeMin} dk${train}`);
+  const verdict = v.trainMin == null ? ''
+    : v.faster === 'bike' ? `Lime/Voi ${v.diff} dk daha hızlı ✨`
+    : v.faster === 'train' ? `Tren ${v.diff} dk daha hızlı`
+    : 'İkisi de aynı, keyfine göre 😌';
+  const lime = state.lime
+    ? state.lime.count ? `Lime: 400 m içinde ${state.lime.count} araç, en yakını ${state.lime.nearestM} m` : 'Lime: 400 m içinde boş araç yok'
+    : '';
+  const when = `${atTime(b.departAt)} çıkarsan ${j.dir === 'work' ? 'işe' : 'eve'}`;
+  setText($('bike-sub'), [verdict ? `${when}: ${verdict}` : when, lime].filter(Boolean).join(' · '));
 }
 
 function ago(ms) {
@@ -564,6 +680,8 @@ function fillSettings() {
   form.home.value = settings.homeName;
   form.useLocation.checked = settings.useLocation;
   form.useLocation.disabled = !invoke;
+  form.bike.checked = settings.bike;
+  form.postcode.value = settings.homePostcode;
   form.walk.value = settings.walkMin;
   form.leave.value = settings.leaveAt;
   form.morning.value = settings.morningAt;
@@ -604,6 +722,8 @@ form.addEventListener('submit', (e) => {
   const home = findStation(form.home.value);
   if (!work || !home) return formError('İstasyonu listeden seç 🙏');
   if (work.id === home.id) return formError('İş ve ev durağı aynı olamaz 🙂');
+  const postcode = form.postcode.value.trim().toUpperCase();
+  if (postcode && !/^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/.test(postcode)) return formError('Posta kodu tam olmalı, ör. SE18 6HQ');
   const days = [...form.querySelectorAll('[name="day"]:checked')].map((b) => Number(b.value));
 
   settings = {
@@ -616,6 +736,8 @@ form.addEventListener('submit', (e) => {
     walkMin: clamp(parseInt(form.walk.value, 10), 0, 90, DEFAULTS.walkMin),
     leaveAt: form.leave.value || DEFAULTS.leaveAt,
     morningAt: form.morning.value,
+    bike: form.bike.checked,
+    homePostcode: postcode,
     remindMin: clamp(parseInt(form.remind.value, 10), 0, 60, DEFAULTS.remindMin),
     days,
     notify: form.notify.checked,
@@ -625,6 +747,7 @@ form.addEventListener('submit', (e) => {
   if (invoke) call('autostart', { enable: form.autostart.checked });
   state.journeyKey = '';
   state.error = '';
+  state.bike = null;
   nextLocate = 0;
   setView('main');
 });
@@ -637,6 +760,8 @@ $('btn-quit').addEventListener('click', () => call('quit'));
 let nextArrivals = 0;
 let nextStatus = 0;
 let nextLocate = 0;
+let nextBike = 0;
+let nextLime = 0;
 
 function tick() {
   const now = Date.now();
@@ -646,6 +771,7 @@ function tick() {
     state.journeyKey = key;
     tracker = new Tracker();
     nextArrivals = 0;
+    nextBike = 0;
   }
   const watching = configured() && (isLive(now) || state.view !== 'pill');
   if (configured() && settings.useLocation && now >= nextLocate) {
@@ -659,6 +785,14 @@ function tick() {
   if (now >= nextStatus) {
     nextStatus = now + (watching ? 2 : 10) * MIN;
     refreshStatus();
+  }
+  if (settings.bike && watching && now >= nextBike && (state.arr || state.error)) {
+    nextBike = now + 10 * MIN;
+    refreshBike();
+  }
+  if (settings.bike && state.view === 'main' && state.pos && now >= nextLime) {
+    nextLime = now + 3 * MIN;
+    refreshLime();
   }
   watchReminders(currentPlan(now), now);
   render();

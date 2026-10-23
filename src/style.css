@@ -20,6 +20,8 @@
   --relaxed: #2FA36B;
   --now: #E99A2C;
   --run: #E5534B;
+  --bike: #7CCB3A;
+  --bike-soft: #EEF8E4;
   --shadow: 0 6px 18px rgba(52, 30, 104, .22), 0 1px 3px rgba(52, 30, 104, .18);
   color-scheme: light;
 }
@@ -31,6 +33,7 @@
     --ink: #F4EFFF;
     --muted: #AAA0C4;
     --line: #3B3254;
+    --bike-soft: #2C3A2A;
     --shadow: 0 6px 18px rgba(0, 0, 0, .45), 0 1px 3px rgba(0, 0, 0, .4);
     color-scheme: dark;
   }
@@ -285,6 +288,17 @@ h3 small { font-weight: 600; color: var(--muted); }
   background: var(--lilac);
   font-size: 12.5px;
 }
+
+.bike {
+  padding: 9px 11px;
+  border-radius: 14px;
+  background: var(--card);
+  border-left: 4px solid var(--bike);
+}
+.bike.suggest { background: var(--bike-soft); }
+.bike-title { font-weight: 900; font-size: 12.5px; }
+.bike-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
+.bike-sub:empty { display: none; }
 
 .trains { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .trains li {

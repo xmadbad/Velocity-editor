@@ -250,6 +250,8 @@ export const DEFAULTS = {
   homeId: '',
   homeName: '',
   useLocation: true,
+  bike: true, // Lime/Voi e-bisiklet karşılaştırması
+  homePostcode: '', // ev kapısı (isteğe bağlı); yoksa ev durağı
   walkMin: 8, // konum yokken masadan perona
   leaveAt: '18:00', // akşam işten çıkış
   morningAt: '', // sabah evden çıkış (isteğe bağlı)
@@ -383,6 +385,50 @@ export function chooseTrip({ pos, stations = [], routes = [], settings: s, now, 
   const walk = Number(s.walkMin) || 0;
   const morning = parseHHMM(s.morningAt) && new Date(now).getHours() < 12;
   return morning && work.id ? toWork(home, walk, { source: 'manual' }) : toHome(work, walk, { source: 'manual' });
+}
+
+// ---------------------------------------------------------------- e-bisiklet (Lime / Voi)
+
+// Bisikleti bulmak, kilidini açmak ve park yerine bırakmak için pay (dk).
+export const BIKE_OVERHEAD_MIN = 4;
+
+// TfL Journey Planner yanıtından en kısa yolculuk. needMode verilirse o modu
+// içermeyen (ör. baştan sona yürüyüş) yolculuklar sayılmaz.
+export function bestJourney(resp, needMode = '') {
+  let best = null;
+  for (const j of resp?.journeys || []) {
+    const modes = (j.legs || []).map((l) => l.mode?.id);
+    if (needMode && !modes.includes(needMode)) continue;
+    if (!Number.isFinite(j.duration)) continue;
+    if (!best || j.duration < best.duration) best = { duration: j.duration, arrival: Date.parse(j.arrivalDateTime) || 0 };
+  }
+  return best;
+}
+
+// Trenle mi e-bisikletle mi? Kapıdan kapıya dakikalar (bisiklete bulma/park payı dahil).
+// suggest: bisiklet belirgin hızlıysa ya da hat sorunluyken makul bir alternatifse.
+export function bikeVerdict(bikeMin, trainMin, level = 'good') {
+  if (!Number.isFinite(bikeMin)) return null;
+  if (!Number.isFinite(trainMin)) return { bikeMin, trainMin: null, faster: 'bike', diff: 0, suggest: level !== 'good' };
+  const diff = Math.round(trainMin - bikeMin);
+  const faster = Math.abs(diff) < 2 ? 'same' : diff > 0 ? 'bike' : 'train';
+  const troubled = level === 'bad' || level === 'closed';
+  return { bikeMin, trainMin, faster, diff: Math.abs(diff), suggest: diff >= 5 || (troubled && bikeMin <= trainMin + 15) };
+}
+
+// GBFS free_bike_status: yakındaki kullanılabilir araçlar.
+export function nearbyVehicles(feed, pos, radiusM = 400) {
+  const bikes = feed?.data?.bikes || feed?.data?.vehicles || [];
+  let count = 0;
+  let nearest = null;
+  for (const b of bikes) {
+    if (b.is_reserved || b.is_disabled || !Number.isFinite(b.lat) || !Number.isFinite(b.lon)) continue;
+    const d = distanceM(pos, b);
+    if (d > radiusM) continue;
+    count++;
+    if (!nearest || d < nearest.d) nearest = { d, rangeM: b.current_range_meters };
+  }
+  return { count, nearestM: nearest ? Math.round(nearest.d) : null, rangeM: nearest?.rangeM ?? null };
 }
 
 // ---------------------------------------------------------------- değişiklik takibi

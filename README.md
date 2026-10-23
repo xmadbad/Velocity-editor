@@ -20,6 +20,12 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
   bulur, yürüme süresini mesafeden hesaplar (sokak payı + perona iniş). Bugün başka bir
   ofisteysen oradan, evdeysen sabah yönünde (eve → işe) hesaplar. Konum kapalı ya da
   bulanıksa ayarlardaki iş durağını ve yürüme süreni kullanır, panelde de nedenini söyler.
+- **Lime / Voi e-bisiklet:** Aynı çıkış saati için e-bisikletle (TfL'nin bisiklet
+  rotası, "hızlı" sürücü + 4 dk bisikleti bulma/park payı) ve trenle kapıdan kapıya
+  süreyi kıyaslar. Hat sorunluysa hap ve bildirim "Lime/Voi ile eve ~31 dk" der. Ev posta
+  kodunu yazarsan süre kapına kadar hesaplanır. Lime ve Voi, Londra'daki araçlarının canlı
+  konumunu herkese açık yayınlamıyor. Lime'ın şehir akışı Londra için de açılırsa yakındaki
+  Lime bisikletlerini de gösterir, açık değilse bu satır görünmez.
 - **Doğru trenler:** Yalnızca senin durağında da duran trenleri sayar (Abbey Wood /
   Shenfield / Heathrow / Reading dallarını ayırt eder, erken biten trenleri eler).
 - **Değişince söyler:** Hedef trenin saati 2+ dk kayarsa, tren listeden düşerse ya da
@@ -54,7 +60,8 @@ yönetici izni istemez.
 
 Yalnızca TfL'nin herkese açık Unified API'sine (`api.tfl.gov.uk`) bağlanır:
 `/Line/elizabeth/Arrivals`, `/Line/elizabeth/Status`, `/Line/elizabeth/StopPoints`,
-`/Line/elizabeth/Route/Sequence`. Mesai saatinde 30 sn'de bir, dışında 10 dk'da bir
+`/Line/elizabeth/Route/Sequence`, `/Journey/JourneyResults` (bisiklet/tren süresi);
+e-bisiklet açıksa Lime'ın açık GBFS akışını da dener (`data.lime.bike`). Mesai saatinde 30 sn'de bir, dışında 10 dk'da bir
 yoklar. Konumun yalnızca bilgisayarında, en yakın durağı bulmak için kullanılır; hiçbir
 yere gönderilmez. Ayarlar da bilgisayarında kalır. Anahtarsız çalışır; çok yoğun kullanımda
 [TfL API portalından](https://api-portal.tfl.gov.uk) ücretsiz bir app key alıp

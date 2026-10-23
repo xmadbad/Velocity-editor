@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildRoutes, trainsForTrip, stationsFromStopPoints, nameIndex, cleanStationName,
   parseStatus, plan, insight, locSuffix, atTime, dayMode, Tracker, MIN, DEFAULTS,
-  chooseTrip, distanceM, walkMinutes,
+  chooseTrip, distanceM, walkMinutes, bestJourney, bikeVerdict, nearbyVehicles,
 } from '../src/logic.js';
 import { routeSequenceEast, routeSequenceBranchesOnly, stopPoints, arrivalsAtBondStreet } from './fixtures.js';
 
@@ -216,4 +216,41 @@ test('konum: iki durak arasında küçük oynamalarda durak değişmez', () => {
   assert.equal(sticky.from.id, '910GTOTCTRD');
   const moved = chooseTrip({ pos: { lat: 51.5145, lon: -0.1480, accuracy: 30 }, stations: STATIONS, routes: routesEast, settings: ME, now: at(17, 30), prevFromId: first.from.id });
   assert.equal(moved.from.id, '910GBONDST'); // gerçekten yürüdün
+});
+
+// ------------------------------------------------------------------ e-bisiklet
+
+test('Journey Planner: en kısa yolculuk, gereken mod yoksa sayılmaz', () => {
+  const resp = { journeys: [
+    { duration: 44, arrivalDateTime: '2026-10-23T18:44:00', legs: [{ mode: { id: 'walking' } }, { mode: { id: 'elizabeth-line' } }, { mode: { id: 'walking' } }] },
+    { duration: 39, arrivalDateTime: '2026-10-23T18:39:00', legs: [{ mode: { id: 'walking' } }, { mode: { id: 'elizabeth-line' } }] },
+    { duration: 30, arrivalDateTime: '2026-10-23T18:30:00', legs: [{ mode: { id: 'walking' } }] }, // trensiz
+  ] };
+  assert.equal(bestJourney(resp, 'elizabeth-line').duration, 39);
+  assert.equal(bestJourney(resp).duration, 30);
+  assert.equal(bestJourney({}), null);
+});
+
+test('bisiklet mi tren mi', () => {
+  assert.deepEqual(bikeVerdict(32, 41), { bikeMin: 32, trainMin: 41, faster: 'bike', diff: 9, suggest: true });
+  assert.equal(bikeVerdict(45, 39).faster, 'train');
+  assert.equal(bikeVerdict(45, 39).suggest, false);
+  assert.equal(bikeVerdict(45, 39, 'closed').suggest, true); // hat kapalıyken öner
+  assert.equal(bikeVerdict(60, 39, 'bad').suggest, false); // ama çok uzunsa değil
+  assert.equal(bikeVerdict(40, 41).faster, 'same');
+  assert.equal(bikeVerdict(NaN, 41), null);
+});
+
+test('GBFS: yakındaki kullanılabilir bisikletler', () => {
+  const pos = { lat: 51.5152, lon: -0.1470 };
+  const feed = { data: { bikes: [
+    { lat: 51.5155, lon: -0.1470, current_range_meters: 21000 }, // ~33 m
+    { lat: 51.5160, lon: -0.1470, is_reserved: true }, // rezerve
+    { lat: 51.5170, lon: -0.1470 }, // ~200 m
+    { lat: 51.5300, lon: -0.1470 }, // 1.6 km
+  ] } };
+  const r = nearbyVehicles(feed, pos);
+  assert.equal(r.count, 2);
+  assert.ok(r.nearestM >= 30 && r.nearestM <= 36, String(r.nearestM));
+  assert.equal(r.rangeM, 21000);
 });

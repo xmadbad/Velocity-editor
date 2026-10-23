@@ -35,6 +35,8 @@ const STOPS = [
 
 const status = (sev, desc, reason) => [{ id: 'elizabeth', lineStatuses: [{ statusSeverity: sev, statusSeverityDescription: desc, reason }] }];
 const GOOD = status(10, 'Good Service');
+const CLOSED = status(3, 'Part Suspended', 'ELIZABETH LINE: No service between Paddington and Abbey Wood due to a signal failure at Whitechapel.');
+const journeyResp = (min, mode) => ({ journeys: [{ duration: min, arrivalDateTime: '2026-10-23T18:40:00', legs: [{ mode: { id: 'walking' } }, { mode: { id: mode } }] }] });
 const MINOR = status(9, 'Minor Delays', 'ELIZABETH LINE: Minor delays between Paddington and Abbey Wood due to an earlier faulty train at Whitechapel. Tickets are being accepted on London Underground.');
 
 function arrivals(now, mins) {
@@ -58,6 +60,11 @@ const scenes = [
   // Konum: sabah evdesin → Woolwich'ten işe
   { name: '12-location-home-morning', time: at(8, 3), arr: (n) => WEST(n, [6, 13, 21, 28, 35, 42]), status: GOOD, open: 'main', pos: [51.4930, 0.0690, 40] },
   // Konum kapalı → sabit durak, nasıl açılacağını söyler
+  // E-bisiklet: Lime/Voi trenden hızlı, Lime akışı da varmış gibi
+  { name: '14-bike-faster', time: at(17, 42), arr: (n) => EAST(n, [9, 16, 25, 32]), status: GOOD, open: 'main', pos: [51.5152, -0.1470, 30], bike: [26, 41], lime: true },
+  // Hat kısmen durdu: trenler yok, Lime/Voi öner
+  { name: '15-bike-closed', time: at(17, 52), arr: () => [], status: CLOSED, pos: [51.5152, -0.1470, 30], bike: [27, 58] },
+  { name: '16-bike-closed-panel', time: at(17, 52), arr: () => [], status: CLOSED, open: 'main', pos: [51.5152, -0.1470, 30], bike: [27, 58] },
   { name: '13-location-denied', time: at(17, 42), arr: (n) => EAST(n, [9, 16, 25]), status: GOOD, open: 'main', pos: 'denied' },
   { name: '7-settings', time: at(17, 42), arr: (n) => EAST(n, [9]), status: GOOD, open: 'settings' },
   { name: '8-first-run', time: at(12, 0), arr: () => [], status: GOOD, settings: null },
@@ -87,9 +94,21 @@ for (const sc of scenes) {
       };
     }
   }, [s, sc.pos]);
+  await page.route('https://data.lime.bike/**', (route) => {
+    if (!sc.lime) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' });
+    const url = route.request().url();
+    const near = (dLat, dLon) => ({ lat: sc.pos[0] + dLat, lon: sc.pos[1] + dLon, is_reserved: false, is_disabled: false, current_range_meters: 24000 });
+    const body = url.endsWith('gbfs.json')
+      ? { data: { en: { feeds: [{ name: 'free_bike_status', url: 'https://data.lime.bike/api/partners/v2/gbfs/london/free_bike_status' }] } } }
+      : { data: { bikes: [near(0.0005, 0), near(-0.001, 0.0008), near(0.0015, -0.001), near(0.02, 0)] } };
+    route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+  });
   await page.route('https://api.tfl.gov.uk/**', (route) => {
-    const path = new URL(route.request().url()).pathname;
-    const body = path.endsWith('/Status') ? sc.status
+    const u = new URL(route.request().url());
+    const path = u.pathname;
+    const [cycleMin, trainMin] = sc.bike || [35, 41];
+    const body = path.includes('/Journey/') ? journeyResp(u.searchParams.get('mode') === 'cycle' ? cycleMin : trainMin, u.searchParams.get('mode') === 'cycle' ? 'cycle' : 'elizabeth-line')
+      : path.endsWith('/Status') ? sc.status
       : path.endsWith('/StopPoints') ? STOPS
       : path.includes('/Route/Sequence/outbound') ? routeSequenceEast
       : path.includes('/Route/Sequence/') ? {}
