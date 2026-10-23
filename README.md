@@ -31,13 +31,13 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
 - **Değişince söyler:** Hedef trenin saati 2+ dk kayarsa, tren listeden düşerse ya da
   Elizabeth line'da gecikme/kapanma olursa bildirir. Çıkmana 5 dk kala "toparlan",
   vakit gelince "şimdi çık" der.
-- **Yer kaplamaz:** 320×96 px'lik bir hap. Tıklayınca panel açılır, başka yere
+- **Yer kaplamaz:** 264×72 px, en fazla 2 satırlık bir hap. Tıklayınca panel açılır, başka yere
   tıklayınca küçülür. Sürükleyip istediğin köşeye koyabilirsin, yerini hatırlar.
   Tepsi simgesinden gizleyip açabilirsin.
 - **Tatlıdır:** Lizzie'nin yüzü duruma göre değişir: her şey yolundayken gülümser,
   gecikmede terler, ciddi sorunda ağlar, mesai dışında uyur 😴.
 
-Zaman çizelgesi (hapın alt satırı): soldaki 🚪 "şimdi çıkman gerek" anlamına gelir.
+Zaman çizelgesi (panelde): soldaki 🚪 "şimdi çıkman gerek" anlamına gelir.
 Trenler, onlara yetişmek için çıkman gereken ana göre dizilir ve zaman geçtikçe kapıya
 yaklaşır. Minik mor vagon senin hedef trenin.
 

@@ -15,7 +15,6 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_notification::NotificationExt;
 
-const WIDTH: f64 = 320.0;
 // JS'in Rust üzerinden gidebileceği adresler (TfL ve Lime'ın açık bisiklet akışı).
 const ALLOWED: [&str; 2] = ["https://api.tfl.gov.uk/", "https://data.lime.bike/"];
 
@@ -160,11 +159,16 @@ fn set_tooltip(app: AppHandle, text: String) {
     }
 }
 
-// Pencere yüksekliğini değiştirir. Ekranın alt yarısındaysa alt kenar sabit kalır
-// (panel yukarı açılır). `grow_up` verilirse o kullanılır, böylece açma ve kapama
-// aynı kenara tutunur. Kullanılan yönü döndürür.
+// Pencereyi içeriğe göre boyutlar. grow_up / grow_left: alt / sağ kenar sabit kalsın
+// (hap ekranın o köşesindeyse panel ekrana doğru açılır, kapanınca aynı köşeye döner).
 #[tauri::command]
-fn set_height(window: WebviewWindow, height: f64, grow_up: Option<bool>) -> Result<bool, String> {
+fn resize(
+    window: WebviewWindow,
+    width: f64,
+    height: f64,
+    grow_up: bool,
+    grow_left: bool,
+) -> Result<(), String> {
     window
         .state::<Placement>()
         .expanded
@@ -172,42 +176,43 @@ fn set_height(window: WebviewWindow, height: f64, grow_up: Option<bool>) -> Resu
     let scale = window.scale_factor().map_err(err)?;
     let pos = window.outer_position().map_err(err)?;
     let size = window.outer_size().map_err(err)?;
-    let area = window
-        .current_monitor()
-        .map_err(err)?
-        .map(|m| *m.work_area());
-
-    let grow_up = grow_up.unwrap_or_else(|| match area {
-        Some(a) => pos.y + size.height as i32 / 2 > a.position.y + a.size.height as i32 / 2,
-        None => false,
-    });
+    let (old_w, old_h) = (size.width as i32, size.height as i32);
+    let new_w = (width * scale).round() as i32;
     let new_h = (height * scale).round() as i32;
+
+    let mut x = if grow_left {
+        pos.x + old_w - new_w
+    } else {
+        pos.x
+    };
     let mut y = if grow_up {
-        pos.y + size.height as i32 - new_h
+        pos.y + old_h - new_h
     } else {
         pos.y
     };
-    if let Some(a) = area {
-        let bottom = a.position.y + a.size.height as i32;
-        y = y.min(bottom - new_h).max(a.position.y);
+    if let Some(a) = window
+        .current_monitor()
+        .map_err(err)?
+        .map(|m| *m.work_area())
+    {
+        x = x
+            .min(a.position.x + a.size.width as i32 - new_w)
+            .max(a.position.x);
+        y = y
+            .min(a.position.y + a.size.height as i32 - new_h)
+            .max(a.position.y);
     }
-    if grow_up {
-        // Önce yukarı taşı ki pencere bir anlığına ekranın altına taşmasın.
-        window
-            .set_position(PhysicalPosition::new(pos.x, y))
-            .map_err(err)?;
-        window
-            .set_size(LogicalSize::new(WIDTH, height))
-            .map_err(err)?;
+    let new_pos = PhysicalPosition::new(x, y);
+    let new_size = LogicalSize::new(width, height);
+    // Büyürken önce taşı, küçülürken önce boyutla: pencere bir an bile ekrandan taşmasın.
+    if new_w > old_w || new_h > old_h {
+        window.set_position(new_pos).map_err(err)?;
+        window.set_size(new_size).map_err(err)?;
     } else {
-        window
-            .set_size(LogicalSize::new(WIDTH, height))
-            .map_err(err)?;
-        window
-            .set_position(PhysicalPosition::new(pos.x, y))
-            .map_err(err)?;
+        window.set_size(new_size).map_err(err)?;
+        window.set_position(new_pos).map_err(err)?;
     }
-    Ok(grow_up)
+    Ok(())
 }
 
 #[tauri::command]
@@ -371,7 +376,7 @@ fn main() {
             notify,
             autostart,
             set_tooltip,
-            set_height,
+            resize,
             start_drag,
             hide,
             quit,

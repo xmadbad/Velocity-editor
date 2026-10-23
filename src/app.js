@@ -263,7 +263,7 @@ function watchBike() {
   if (!v?.suggest || !isLive() || !(level === 'bad' || level === 'closed') || !once(`bike:${today()}`)) return;
   const where = journey().dir === 'work' ? 'İşe' : 'Eve';
   const train = Number.isFinite(v.trainMin) ? `, trenle ~${v.trainMin} dk` : '';
-  say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${v.bikeMin} dk${train}.`);
+  say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${v.bikeMin} dk${train}.`, `Hat sorunlu · ${where.toLowerCase()} ~${v.bikeMin} dk`);
 }
 const tripSettings = (j) => ({ ...settings, walkMin: j.walkMin, leaveAt: j.leaveAt });
 
@@ -308,8 +308,9 @@ function once(key) {
   return true;
 }
 
-function say(title, body) {
-  state.alerts = [{ title, body, at: Date.now() }, ...state.alerts].slice(0, 3);
+// short: hapın ikinci satırına sığan özet; uzun metin Windows bildiriminde ve panelde.
+function say(title, body, short = body) {
+  state.alerts = [{ title, body, short, at: Date.now() }, ...state.alerts].slice(0, 3);
   state.alertUntil = Date.now() + 25_000;
   if (settings.notify) call('notify', { title, body });
   render();
@@ -320,17 +321,19 @@ function planLine(p) {
   return t ? `Yeni plan: ${atTime(t.leaveBy)} çık, ${fmtTime(t.time)} trenine bin.` : 'Şimdilik başka tren görünmüyor.';
 }
 
+const planShort = (p) => (p?.target ? `${atTime(p.target.leaveBy)} çık` : 'başka tren yok');
+
 function watchForChanges() {
   const now = Date.now();
   if (!isLive(now)) return;
   const p = currentPlan(now);
   for (const ev of tracker.update(p, now)) {
     if (ev.type === 'shift' && ev.delta > 0) {
-      say(`😿 Trenin ${ev.delta} dk gecikti`, `${fmtTime(ev.from.base)} treni artık ${fmtTime(ev.to.time)} görünüyor. ${planLine(p)}`);
+      say(`😿 Trenin ${ev.delta} dk gecikti`, `${fmtTime(ev.from.base)} treni artık ${fmtTime(ev.to.time)} görünüyor. ${planLine(p)}`, `${fmtTime(ev.from.base)} → ${fmtTime(ev.to.time)} · ${planShort(p)}`);
     } else if (ev.type === 'shift') {
-      say(`⏩ Trenin ${-ev.delta} dk erkene kaydı`, `${fmtTime(ev.from.base)} treni artık ${fmtTime(ev.to.time)}. ${planLine(p)}`);
+      say(`⏩ Trenin ${-ev.delta} dk erkene kaydı`, `${fmtTime(ev.from.base)} treni artık ${fmtTime(ev.to.time)}. ${planLine(p)}`, `${fmtTime(ev.from.base)} → ${fmtTime(ev.to.time)} · ${planShort(p)}`);
     } else if (ev.type === 'gone') {
-      say(`⚠️ ${fmtTime(ev.from.time)} treni listeden düştü`, `İptal olmuş olabilir. ${planLine(p)}`);
+      say(`⚠️ ${fmtTime(ev.from.time)} treni düştü`, `Listeden çıktı, iptal olmuş olabilir. ${planLine(p)}`, `İptal olabilir · ${planShort(p)}`);
     }
   }
 }
@@ -341,11 +344,11 @@ function watchReminders(p, now) {
   const day = `${journey(now).dir}:${today(now)}`;
   const remindMin = Number(settings.remindMin) || 0;
   if (remindMin > 1 && t.slack <= remindMin && t.slack > 1.5 && once(`remind:${day}`)) {
-    say('🎒 Toparlanma vakti', `${fmtTime(t.time)} trenine yetişmek için ${atTime(t.leaveBy)} çık (${fmtDuration(Math.ceil(t.slack))} kaldı).`);
+    say('🎒 Toparlanma vakti', `${fmtTime(t.time)} trenine yetişmek için ${atTime(t.leaveBy)} çık (${fmtDuration(Math.ceil(t.slack))} kaldı).`, `${fmtTime(t.time)} için ${atTime(t.leaveBy)} çık`);
   }
   if (t.slack <= 1 && t.slack >= -0.5 && once(`go:${day}`)) {
     const next = p.alt ? ` Kaçırırsan sonraki ${fmtTime(p.alt.time)}.` : '';
-    say('🏃 Çıkış vakti!', `${fmtTime(t.time)} treni (${t.dest}) için şimdi çık.${next}`);
+    say('🏃 Çıkış vakti!', `${fmtTime(t.time)} treni (${t.dest}) için şimdi çık.${next}`, `${fmtTime(t.time)} → ${t.dest}`);
   }
 }
 
@@ -357,8 +360,8 @@ function watchStatus() {
   if (prev === s.level) return;
   store.set(key, s.level);
   if (prev === null && s.level === 'good') return;
-  if (s.level === 'good') say('✨ Elizabeth line düzeldi', 'Hat yeniden iyi serviste. Plan normale döndü.');
-  else say(`${s.level === 'minor' ? '😿' : '🚨'} Elizabeth line: ${LEVEL_TEXT[s.level]}`, s.reason || s.desc);
+  if (s.level === 'good') say('✨ Hat düzeldi', 'Elizabeth line yeniden iyi serviste. Plan normale döndü.', 'Plan normale döndü');
+  else say(`${s.level === 'minor' ? '😿' : '🚨'} Hat: ${LEVEL_TEXT[s.level]}`, s.reason || s.desc, 'Detay için tıkla');
   nextBike = 0; // hat bozulduysa bisiklet seçeneğini hemen tazele
 }
 
@@ -403,7 +406,7 @@ function pillModel(now) {
   const t = p.target;
   if (!t) {
     if (p.early && p.list.length) {
-      return { headline: `${goal} ${fmtTime(L)}`, sub: 'Tahminler yaklaşınca netleşecek', badge: shortDuration((L - now) / MIN), badgeClass: 's-idle', kind: 'calm', plan: p };
+      return { headline: `${goal} ${fmtTime(L)}`, sub: 'Tahminler birazdan gelir', badge: shortDuration((L - now) / MIN), badgeClass: 's-idle', kind: 'calm', plan: p };
     }
     const v = currentBike(now);
     const sub = v ? `🚲 Lime/Voi ile ~${v.bikeMin} dk` : state.error || statusLine;
@@ -413,11 +416,11 @@ function pillModel(now) {
   const stale = state.error && now - state.fetchedAt > 3 * MIN ? `📡 ${state.error} · ${ago(now - state.fetchedAt)}` : '';
   const v = currentBike(now);
   const troubled = ['bad', 'closed'].includes(state.status?.level);
-  const bikeHint = v?.suggest && troubled ? `🚲 Hat sorunlu · Lime/Voi ile ~${v.bikeMin} dk` : '';
-  const where = stale || bikeHint || `${fmtTime(t.time)} treni → ${t.dest}${t.platform ? ` · Peron ${t.platform}` : ''}`;
+  const bikeHint = v?.suggest && troubled ? `🚲 Lime/Voi ile ~${v.bikeMin} dk` : '';
+  const where = stale || bikeHint || `${fmtTime(t.time)} → ${t.dest}`;
   if (t.state === 'run') {
-    const sub = p.alt ? `Yetişemezsen: ${fmtTime(p.alt.time)} (${atTime(p.alt.leaveBy)} çık)` : where;
-    return { headline: 'Koş, yetişirsin! 🏃', sub, badge: 'hemen', badgeClass: 's-run', kind: 'alert', shake: true, plan: p };
+    const sub = p.alt ? `ya da ${fmtTime(p.alt.time)}, ${atTime(p.alt.leaveBy)} çık` : where;
+    return { headline: 'Koş! 🏃', sub, badge: 'hemen', badgeClass: 's-run', kind: 'alert', shake: true, plan: p };
   }
   if (t.state === 'now') {
     return { headline: 'Şimdi çık 🎒', sub: where, badge: `${Math.ceil(t.slack)} dk`, badgeClass: 's-now', kind: 'alert', plan: p };
@@ -449,7 +452,7 @@ function renderPill(now) {
   const a = alerting ? state.alerts[0] : null;
 
   setText($('headline'), a ? a.title : m.headline);
-  setText($('sub'), a ? a.body : m.sub || '');
+  setText($('sub'), a ? a.short : m.sub || '');
   $('pill').title = a ? `${a.title}\n${a.body}` : `${m.headline}\n${m.sub || ''}`;
   $('pill').classList.toggle('alerting', Boolean(a));
 
@@ -575,31 +578,38 @@ function ago(ms) {
   return s < 60 ? `${s} sn önce` : `${Math.round(s / 60)} dk önce`;
 }
 
-let fittedHeight = 0;
+let fitted = '';
+const appSize = () => {
+  const r = $('app').getBoundingClientRect();
+  return { width: Math.ceil(r.width), height: Math.ceil(r.height) };
+};
+
 function render() {
   const now = Date.now();
   const m = renderPill(now);
   if (state.view === 'main') renderMain(now, m);
-  // Panelin içeriği büyüyüp küçüldükçe pencere de ona uysun.
-  if (state.view !== 'pill' && Math.ceil($('app').getBoundingClientRect().height) !== fittedHeight) fitWindow();
+  // İçerik büyüyüp küçüldükçe pencere de ona uysun.
+  const { width, height } = appSize();
+  if (`${width}x${height}` !== fitted) fitWindow();
 }
 
 // ------------------------------------------------------------------ pencere ve görünüm
 
 async function fitWindow() {
   if (!invoke) return;
-  const height = Math.ceil($('app').getBoundingClientRect().height);
-  fittedHeight = height;
-  state.growUp = await call('set_height', { height, growUp: state.growUp });
+  const { width, height } = appSize();
+  fitted = `${width}x${height}`;
+  await call('resize', { width, height, growUp: Boolean(state.growUp), growLeft: Boolean(state.growLeft) });
 }
 
 async function setView(view) {
   if (view !== 'pill' && state.view === 'pill') {
-    // Ekranın alt yarısındaysak panel yukarı açılsın; kapanırken aynı kenara tutun.
-    const mid = (screen.availTop || 0) + screen.availHeight / 2;
-    state.growUp = window.screenY + window.innerHeight / 2 > mid;
+    // Hap hangi köşeye yakınsa panel o köşeden uzağa açılsın; kapanırken aynı köşeye tutun.
+    state.growUp = window.screenY + window.innerHeight / 2 > (screen.availTop || 0) + screen.availHeight / 2;
+    state.growLeft = window.screenX + window.innerWidth / 2 > (screen.availLeft || 0) + screen.availWidth / 2;
     $('app').classList.toggle('up', state.growUp);
   }
+  $('app').classList.toggle('open', view !== 'pill');
   state.view = view;
   $('panel').hidden = view === 'pill';
   $('view-main').hidden = view !== 'main';
@@ -614,6 +624,7 @@ async function setView(view) {
   if (view === 'pill') {
     $('app').classList.remove('up');
     state.growUp = null;
+    state.growLeft = null;
   }
 }
 
