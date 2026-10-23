@@ -86,6 +86,50 @@ async fn tfl_get(url: String) -> Result<String, String> {
     }
 }
 
+// Windows konum servisinden [enlem, boylam, doğruluk (m)]. Wi-Fi'li bir dizüstünde
+// Londra'da genelde birkaç on metre şaşar. Hata metni "denied" ise konum kapalıdır.
+#[tauri::command]
+async fn locate() -> Result<[f64; 3], String> {
+    tauri::async_runtime::spawn_blocking(locate_now)
+        .await
+        .map_err(err)?
+}
+
+#[cfg(windows)]
+fn locate_now() -> Result<[f64; 3], String> {
+    use windows::Devices::Geolocation::{GeolocationAccessStatus, Geolocator};
+    use windows::Foundation::TimeSpan;
+
+    let geo_err = |e: windows::core::Error| {
+        if e.code().0 as u32 == 0x8007_0005 {
+            "denied".to_string() // E_ACCESSDENIED
+        } else {
+            e.to_string()
+        }
+    };
+    if let Ok(status) = Geolocator::RequestAccessAsync().and_then(|op| op.join()) {
+        if status == GeolocationAccessStatus::Denied {
+            return Err("denied".into());
+        }
+    }
+    let locator = Geolocator::new().map_err(geo_err)?;
+    let max_age = TimeSpan::from(Duration::from_secs(120));
+    let timeout = TimeSpan::from(Duration::from_secs(15));
+    let position = locator
+        .GetGeopositionAsyncWithAgeAndTimeout(max_age, timeout)
+        .and_then(|op| op.join())
+        .map_err(geo_err)?;
+    let coord = position.Coordinate().map_err(geo_err)?;
+    let point = coord.Point().and_then(|p| p.Position()).map_err(geo_err)?;
+    let accuracy = coord.Accuracy().unwrap_or(-1.0);
+    Ok([point.Latitude, point.Longitude, accuracy])
+}
+
+#[cfg(not(windows))]
+fn locate_now() -> Result<[f64; 3], String> {
+    Err("unsupported".into())
+}
+
 #[tauri::command]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
     app.notification()
@@ -322,6 +366,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             tfl_get,
+            locate,
             notify,
             autostart,
             set_tooltip,

@@ -34,6 +34,7 @@
         </div>
         <p id="insight" class="insight" hidden></p>
         <h3>Sıradaki trenler <small id="route"></small></h3>
+        <p id="where" class="where"></p>
         <ol id="trains" class="trains"></ol>
         <p id="note" class="note" hidden></p>
         <footer>
@@ -45,24 +46,32 @@
 
       <form id="view-settings" class="view settings" hidden autocomplete="off">
         <h3>Ayarlar ✨</h3>
-        <label><span>Nereden <small>· işe yakın durak</small></span>
-          <input name="from" list="stations" placeholder="ör. Bond Street" required>
-        </label>
-        <label><span>Nereye <small>· eve yakın durak</small></span>
-          <input name="to" list="stations" placeholder="ör. Woolwich" required>
-        </label>
-        <div class="three">
-          <label title="Masandan kalkıp perona inmen kaç dakika sürüyor?"><span>Yürüme <small>dk</small></span>
-            <input name="walk" type="number" min="0" max="90" step="1" required>
+        <div class="two">
+          <label><span>İş durağı</span>
+            <input name="work" list="stations" placeholder="ör. Bond Street" required>
           </label>
-          <label title="Genelde kaçta çıkıyorsun?"><span>Çıkışım</span>
+          <label><span>Ev durağı</span>
+            <input name="home" list="stations" placeholder="ör. Woolwich" required>
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" name="useLocation"> 📍 Konumumu kullan</label>
+        <p class="hint">Açıkken en yakın duraktan kalkarsın, yürüme süresi mesafeden hesaplanır; evdeysen yön işe döner. Sabah çıkışı boş kalabilir.</p>
+        <div class="two">
+          <label title="Genelde kaçta işten çıkıyorsun?"><span>Akşam çıkışım</span>
             <input name="leave" type="time" required>
           </label>
-          <label title="Çıkmadan kaç dakika önce dürteyim?"><span>Hatırlat <small>dk</small></span>
+          <label title="Boş bırakırsan sabahları yalnızca panel açıkken bakar"><span>Sabah çıkışım</span>
+            <input name="morning" type="time">
+          </label>
+        </div>
+        <div class="two">
+          <label title="Konum yokken: masandan kalkıp perona inmen kaç dakika?"><span>Yürüme <small>dk · konum yokken</small></span>
+            <input name="walk" type="number" min="0" max="90" step="1" required>
+          </label>
+          <label title="Çıkmadan kaç dakika önce dürteyim?"><span>Hatırlat <small>dk önce</small></span>
             <input name="remind" type="number" min="0" max="60" step="1">
           </label>
         </div>
-        <p class="hint">Yürüme = masandan kalkıp perona inmen. Çıkışım = genelde çıktığın saat; Lizzie bu saatin etrafındaki en mantıklı treni seçer.</p>
         <fieldset class="days">
           <legend>İş günlerim</legend>
           <label><input type="checkbox" name="day" value="1"><span>Pzt</span></label>

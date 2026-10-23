@@ -16,6 +16,10 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
 - **18:00'de çıksam ne olur?** Panelde açıklar: "18:00 yerine 17:59'da çıkarsan 18:07
   trenine binersin, eve 7 dk erken varırsın" ya da "18:00'de çıkarsan perona 18:08 gibi
   varıp 4 dk beklersin; 18:04'te çık".
+- **Neredeysen oradan:** Windows konum servisiyle sana en yakın Elizabeth line durağını
+  bulur, yürüme süresini mesafeden hesaplar (sokak payı + perona iniş). Bugün başka bir
+  ofisteysen oradan, evdeysen sabah yönünde (eve → işe) hesaplar. Konum kapalı ya da
+  bulanıksa ayarlardaki iş durağını ve yürüme süreni kullanır, panelde de nedenini söyler.
 - **Doğru trenler:** Yalnızca senin durağında da duran trenleri sayar (Abbey Wood /
   Shenfield / Heathrow / Reading dallarını ayırt eder, erken biten trenleri eler).
 - **Değişince söyler:** Hedef trenin saati 2+ dk kayarsa, tren listeden düşerse ya da
@@ -37,8 +41,11 @@ yaklaşır. Minik mor vagon senin hedef trenin.
    `Lizzie-windows` paketini indir (ya da sana gönderilen `Lizzie_x.y.z_x64-setup.exe`'yi kullan).
 2. `Lizzie_…_x64-setup.exe`'yi çalıştır. İmzasız olduğu için Windows SmartScreen
    "Bilinmeyen yayımcı" diyebilir: **Ek bilgi → Yine de çalıştır**.
-3. İlk açılışta ayarlar gelir: işe yakın durağı, eve yakın durağı, masandan perona kaç
-   dakika yürüdüğünü ve normal çıkış saatini gir. **Windows açılınca başlat**'ı işaretle.
+3. İlk açılışta ayarlar gelir: iş ve ev durağını, akşam (ve istersen sabah) çıkış
+   saatini gir. **Windows açılınca başlat**'ı işaretle.
+4. Konumun çalışması için Windows'ta **Ayarlar › Gizlilik ve güvenlik › Konum** altında
+   konum servisleri ve "Masaüstü uygulamalarının konumuna erişmesine izin ver" açık olmalı.
+   Windows ilk seferde Lizzie için izin sorabilir.
 
 Windows 10/11 gerekir (WebView2 zaten yüklüdür). Kurulum kullanıcı klasörüne yapılır,
 yönetici izni istemez.
@@ -48,7 +55,8 @@ yönetici izni istemez.
 Yalnızca TfL'nin herkese açık Unified API'sine (`api.tfl.gov.uk`) bağlanır:
 `/Line/elizabeth/Arrivals`, `/Line/elizabeth/Status`, `/Line/elizabeth/StopPoints`,
 `/Line/elizabeth/Route/Sequence`. Mesai saatinde 30 sn'de bir, dışında 10 dk'da bir
-yoklar. Ayarlar bilgisayarında kalır. Anahtarsız çalışır; çok yoğun kullanımda
+yoklar. Konumun yalnızca bilgisayarında, en yakın durağı bulmak için kullanılır; hiçbir
+yere gönderilmez. Ayarlar da bilgisayarında kalır. Anahtarsız çalışır; çok yoğun kullanımda
 [TfL API portalından](https://api-portal.tfl.gov.uk) ücretsiz bir app key alıp
 Ayarlar → Gelişmiş'e yazabilirsin.
 
@@ -73,7 +81,7 @@ Arayüzün ekran görüntüleri sahte TfL verisiyle: `TZ=Europe/London node test
 
 | Dosya | Ne işe yarar |
 | --- | --- |
-| `src/logic.js` | Saf mantık: tren süzme, "kaçta çık" planı, rötar takibi, Türkçe saat ekleri |
+| `src/logic.js` | Saf mantık: konuma göre yolculuk seçimi, tren süzme, "kaçta çık" planı, rötar takibi, Türkçe saat ekleri |
 | `src/app.js` | Arayüz, TfL'yi yoklama, hatırlatmalar ve bildirimler |
 | `src/face.js` | Lizzie'nin yüzü (SVG) ve ruh halleri |
-| `src-tauri/src/main.rs` | Windows kabuğu: pencere, tepsi, bildirim, otomatik başlatma |
+| `src-tauri/src/main.rs` | Windows kabuğu: pencere, tepsi, konum, bildirim, otomatik başlatma |

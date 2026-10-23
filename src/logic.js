@@ -27,7 +27,10 @@ export function stationsFromStopPoints(stopPoints) {
   for (const sp of stopPoints || []) {
     const id = normId(sp.naptanId || sp.id);
     const name = cleanStationName(sp.commonName || sp.name);
-    if (id && name && !byId.has(id)) byId.set(id, { id, name });
+    if (!id || !name || byId.has(id)) continue;
+    const st = { id, name };
+    if (Number.isFinite(sp.lat) && Number.isFinite(sp.lon)) Object.assign(st, { lat: sp.lat, lon: sp.lon });
+    byId.set(id, st);
   }
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'en'));
 }
@@ -242,12 +245,14 @@ export function fmtDuration(min) {
 // ---------------------------------------------------------------- plan
 
 export const DEFAULTS = {
-  fromId: '',
-  fromName: '',
-  toId: '',
-  toName: '',
-  walkMin: 8,
-  leaveAt: '18:00',
+  workId: '',
+  workName: '',
+  homeId: '',
+  homeName: '',
+  useLocation: true,
+  walkMin: 8, // konum yokken masadan perona
+  leaveAt: '18:00', // akşam işten çıkış
+  morningAt: '', // sabah evden çıkış (isteğe bağlı)
   remindMin: 5,
   days: [1, 2, 3, 4, 5],
   notify: true,
@@ -266,6 +271,7 @@ export function stateFor(slackMin) {
 export function dayMode(now, s) {
   const day = new Date(now).getDay();
   if (!(s.days || DEFAULTS.days).includes(day)) return 'off';
+  if (!parseHHMM(s.leaveAt)) return 'free'; // bu yön için saat yok: yalnızca istenince bak
   const L = atToday(now, s.leaveAt);
   if (now < L - 90 * MIN) return 'before';
   if (now > L + 180 * MIN) return 'after';
@@ -279,7 +285,7 @@ export function dayMode(now, s) {
 // `atL`: tam L'de çıksaydın hangi trene biner, perona varıp kaç dk beklerdin.
 export function plan(trains, now, s) {
   const walk = (Number(s.walkMin) || 0) * MIN;
-  const L = atToday(now, s.leaveAt);
+  const L = parseHHMM(s.leaveAt) ? atToday(now, s.leaveAt) : now;
   const list = trains
     .map((t) => {
       const leaveBy = t.time - walk;
@@ -315,6 +321,68 @@ export function insight(p) {
     return `${atTime(L)} çıkarsan perona ${fmtTime(atL.platformAt)} gibi varıp ${wait} dk beklersin. ${atTime(target.leaveBy)} çık, beklemeden bin.`;
   }
   return `${fmtTime(L)} çıkışın ${fmtTime(target.time)} trenine tam denk geliyor ✨`;
+}
+
+// ---------------------------------------------------------------- konum
+
+// İki nokta arası kuş uçuşu mesafe (metre).
+export function distanceM(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
+// Kuş uçuşu mesafeden yürüme: sokaklar ~%30 uzatır, 80 m/dk yürürsün,
+// binadan çıkıp derindeki Elizabeth line peronuna inmek de ~4 dk sürer.
+export function walkMinutes(meters) {
+  return Math.round((meters * 1.3) / 80) + 4;
+}
+
+export const MAX_ACCURACY_M = 1500; // konum bundan bulanıksa güvenme
+export const MAX_STATION_M = 5000; // en yakın durak bundan uzaksa "Londra'da değilsin"
+
+const goesTo = (routes, fromId, toId) =>
+  routes.some((r) => {
+    const o = r.indexOf(fromId);
+    return o >= 0 && r.indexOf(toId) > o;
+  });
+
+// Bugünkü yolculuk: nereden, nereye, kaç dk yürüme, hangi çıkış saati.
+//   - Konum biliniyorsa en yakın durak kalkış durağıdır. O durak evinse sabah
+//     yönüne (eve → işe) geçer, değilse oradan eve gidersin.
+//   - Konum yoksa ya da bulanıksa ayarlardaki duraklar kullanılır: sabah saati
+//     verilmişse öğleden önce işe, sonra eve.
+// pos: { lat, lon, accuracy } | null. prevFromId: az önce seçilen kalkış durağı; konum
+// birkaç metre oynadı diye iki durak arasında gidip gelmeyelim diye ona biraz yapışırız.
+export function chooseTrip({ pos, stations = [], routes = [], settings: s, now, prevFromId = '' }) {
+  const home = { id: s.homeId, name: s.homeName };
+  const work = { id: s.workId, name: s.workName };
+  const toWork = (from, walkMin, extra) => ({ dir: 'work', from, to: work.id ? work : null, walkMin, leaveAt: s.morningAt, ...extra });
+  const toHome = (from, walkMin, extra) => ({ dir: 'home', from, to: home, walkMin, leaveAt: s.leaveAt, ...extra });
+
+  if (pos && pos.accuracy <= MAX_ACCURACY_M) {
+    const near = stations
+      .filter((st) => Number.isFinite(st.lat))
+      .map((st) => ({ ...st, d: distanceM(pos, st) }))
+      .sort((a, b) => a.d - b.d);
+    const nearest = near[0];
+    if (nearest && nearest.d <= MAX_STATION_M) {
+      const extra = { source: 'location', distM: nearest.d };
+      if (nearest.id === home.id) return toWork(home, walkMinutes(nearest.d), extra);
+      // Biraz daha uzak ama eve aktarmasız giden bir durak, aktarmalı en yakından iyidir.
+      const usable = (st) => !routes.length || goesTo(routes, st.id, home.id);
+      const best = near.find((st) => st.d <= nearest.d + 800 && usable(st)) || nearest;
+      const prev = near.find((st) => st.id === prevFromId && st.id !== home.id);
+      const from = prev && prev.d <= best.d + 200 && usable(prev) ? prev : best;
+      return toHome({ id: from.id, name: from.name }, walkMinutes(from.d), { ...extra, distM: from.d });
+    }
+  }
+
+  const walk = Number(s.walkMin) || 0;
+  const morning = parseHHMM(s.morningAt) && new Date(now).getHours() < 12;
+  return morning && work.id ? toWork(home, walk, { source: 'manual' }) : toHome(work, walk, { source: 'manual' });
 }
 
 // ---------------------------------------------------------------- değişiklik takibi

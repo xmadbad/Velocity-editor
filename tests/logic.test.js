@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildRoutes, trainsForTrip, stationsFromStopPoints, nameIndex, cleanStationName,
   parseStatus, plan, insight, locSuffix, atTime, dayMode, Tracker, MIN, DEFAULTS,
+  chooseTrip, distanceM, walkMinutes,
 } from '../src/logic.js';
 import { routeSequenceEast, routeSequenceBranchesOnly, stopPoints, arrivalsAtBondStreet } from './fixtures.js';
 
@@ -132,4 +133,87 @@ test('takipçi: araç kimliği yokken bütün trenler kayarsa doğru treni izler
   assert.equal(ev.length, 1);
   assert.equal(ev[0].delta, 4); // 18:10 → 18:14, "3 dk erken" değil
   assert.equal(ev[0].from.base, at(18, 10));
+});
+
+// ------------------------------------------------------------------ konum
+
+const STATIONS = [
+  { id: '910GBONDST', name: 'Bond Street', lat: 51.5142, lon: -0.1494 },
+  { id: '910GTOTCTRD', name: 'Tottenham Court Road', lat: 51.5165, lon: -0.1310 },
+  { id: '910GWOLWXR', name: 'Woolwich', lat: 51.4917, lon: 0.0714 },
+  { id: '910GSTFD', name: 'Stratford', lat: 51.5416, lon: -0.0033 },
+  { id: '910GCANWHRF', name: 'Canary Wharf', lat: 51.5059, lon: -0.0187 },
+];
+const ME = { ...DEFAULTS, workId: '910GBONDST', workName: 'Bond Street', homeId: '910GWOLWXR', homeName: 'Woolwich', walkMin: 8, leaveAt: '18:00', morningAt: '08:30' };
+const routesEast = buildRoutes([routeSequenceEast]);
+const trip = (pos, now = at(17, 30), settings = ME) => chooseTrip({ pos, stations: STATIONS, routes: routesEast, settings, now });
+
+test('mesafe ve yürüme', () => {
+  const d = distanceM({ lat: 51.5142, lon: -0.1494 }, { lat: 51.5165, lon: -0.1310 });
+  assert.ok(d > 1250 && d < 1350, String(d)); // Bond St ↔ TCR ~1.3 km
+  assert.equal(walkMinutes(0), 4);
+  assert.equal(walkMinutes(400), 11);
+});
+
+test('konum: ofisteyken en yakın duraktan eve', () => {
+  const t = trip({ lat: 51.5152, lon: -0.1470, accuracy: 40 }); // Bond Street'e ~200 m
+  assert.equal(t.dir, 'home');
+  assert.equal(t.from.id, '910GBONDST');
+  assert.equal(t.to.id, '910GWOLWXR');
+  assert.equal(t.source, 'location');
+  assert.equal(t.leaveAt, '18:00');
+  assert.equal(t.walkMin, walkMinutes(t.distM));
+
+  const tcr = trip({ lat: 51.5163, lon: -0.1325, accuracy: 40 }); // bugün TCR yakınındasın
+  assert.equal(tcr.from.id, '910GTOTCTRD');
+});
+
+test('konum: evdeyken yön işe döner', () => {
+  const t = trip({ lat: 51.4925, lon: 0.0690, accuracy: 60 }, at(8, 0));
+  assert.equal(t.dir, 'work');
+  assert.equal(t.from.id, '910GWOLWXR');
+  assert.equal(t.to.id, '910GBONDST');
+  assert.equal(t.leaveAt, '08:30');
+});
+
+test('konum: aktarmasız giden biraz uzak durak tercih edilir', () => {
+  // Stratford'a 300 m (Shenfield dalı, Woolwich'e gitmez), Canary Wharf'a ~700 m
+  const stations = [
+    { id: '910GSTFD', name: 'Stratford', lat: 51.6, lon: 0.0027 },
+    { id: '910GCANWHRF', name: 'Canary Wharf', lat: 51.6, lon: -0.0100 },
+  ];
+  const pos = { lat: 51.6, lon: -0.0016, accuracy: 30 };
+  const t = chooseTrip({ pos, stations, routes: routesEast, settings: ME, now: at(17, 30) });
+  assert.equal(t.from.id, '910GCANWHRF');
+});
+
+test('konum yok ya da bulanık: ayarlardaki duraklar', () => {
+  const vague = trip({ lat: 51.5152, lon: -0.1470, accuracy: 3000 });
+  assert.equal(vague.source, 'manual');
+  assert.equal(vague.from.id, '910GBONDST');
+  assert.equal(vague.walkMin, 8);
+  assert.equal(trip(null, at(8, 0)).dir, 'work'); // sabah saati var, öğleden önce
+  assert.equal(trip(null, at(8, 0), { ...ME, morningAt: '' }).dir, 'home');
+  assert.equal(trip({ lat: 40.7, lon: -74, accuracy: 20 }).source, 'manual'); // New York
+});
+
+test('sabah saati yoksa plan "şimdi"ye göre yapılır', () => {
+  assert.equal(dayMode(at(8, 0), { ...ME, leaveAt: '' }), 'free');
+  const p = plan([train(8, 10), train(8, 17)], at(8, 0), { walkMin: 8, leaveAt: '' });
+  assert.equal(p.target.time, at(8, 10));
+  assert.equal(p.early, false);
+});
+
+test('konum: iki durak arasında küçük oynamalarda durak değişmez', () => {
+  // Bond Street (−0.1494) ile TCR (−0.1310) arasının tam ortası, biraz TCR tarafı
+  const mid = { lat: 51.5153, lon: -0.1398, accuracy: 30 };
+  const first = trip(mid);
+  assert.equal(first.from.id, '910GTOTCTRD');
+  const wobble = { ...mid, lon: -0.1408 }; // ~70 m Bond Street'e kaydı
+  const fresh = chooseTrip({ pos: wobble, stations: STATIONS, routes: routesEast, settings: ME, now: at(17, 30) });
+  assert.equal(fresh.from.id, '910GBONDST'); // hafızasız olsa değişirdi
+  const sticky = chooseTrip({ pos: wobble, stations: STATIONS, routes: routesEast, settings: ME, now: at(17, 30), prevFromId: first.from.id });
+  assert.equal(sticky.from.id, '910GTOTCTRD');
+  const moved = chooseTrip({ pos: { lat: 51.5145, lon: -0.1480, accuracy: 30 }, stations: STATIONS, routes: routesEast, settings: ME, now: at(17, 30), prevFromId: first.from.id });
+  assert.equal(moved.from.id, '910GBONDST'); // gerçekten yürüdün
 });
