@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lizzie</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main id="app">
+    <section id="pill" class="pill" aria-live="polite">
+      <div class="avatar"><span id="face"></span><i id="dot" class="dot"></i></div>
+      <div class="info">
+        <div class="row1">
+          <span id="headline" class="headline">Lizzie uyanıyor…</span>
+          <span id="badge" class="badge" hidden></span>
+        </div>
+        <div id="sub" class="sub"></div>
+        <div id="tl" class="tl" hidden>
+          <span class="tl-door" title="Masandan kalkış">🚪</span>
+          <div id="tl-track" class="tl-track"></div>
+        </div>
+      </div>
+      <button id="btn-close" class="close" title="Tepsiye gizle" aria-label="Gizle">×</button>
+    </section>
+
+    <section id="panel" class="panel" hidden>
+      <div id="view-main" class="view">
+        <div id="alerts"></div>
+        <div id="status" class="status">
+          <div id="status-title" class="status-title"></div>
+          <div id="status-reason" class="status-reason"></div>
+        </div>
+        <p id="insight" class="insight" hidden></p>
+        <h3>Sıradaki trenler <small id="route"></small></h3>
+        <ol id="trains" class="trains"></ol>
+        <p id="note" class="note" hidden></p>
+        <footer>
+          <span id="updated" class="updated"></span>
+          <button id="btn-refresh" class="icon" title="Yenile">↻</button>
+          <button id="btn-settings" class="icon" title="Ayarlar">⚙</button>
+        </footer>
+      </div>
+
+      <form id="view-settings" class="view settings" hidden autocomplete="off">
+        <h3>Ayarlar ✨</h3>
+        <label><span>Nereden <small>· işe yakın durak</small></span>
+          <input name="from" list="stations" placeholder="ör. Bond Street" required>
+        </label>
+        <label><span>Nereye <small>· eve yakın durak</small></span>
+          <input name="to" list="stations" placeholder="ör. Woolwich" required>
+        </label>
+        <div class="three">
+          <label title="Masandan kalkıp perona inmen kaç dakika sürüyor?"><span>Yürüme <small>dk</small></span>
+            <input name="walk" type="number" min="0" max="90" step="1" required>
+          </label>
+          <label title="Genelde kaçta çıkıyorsun?"><span>Çıkışım</span>
+            <input name="leave" type="time" required>
+          </label>
+          <label title="Çıkmadan kaç dakika önce dürteyim?"><span>Hatırlat <small>dk</small></span>
+            <input name="remind" type="number" min="0" max="60" step="1">
+          </label>
+        </div>
+        <p class="hint">Yürüme = masandan kalkıp perona inmen. Çıkışım = genelde çıktığın saat; Lizzie bu saatin etrafındaki en mantıklı treni seçer.</p>
+        <fieldset class="days">
+          <legend>İş günlerim</legend>
+          <label><input type="checkbox" name="day" value="1"><span>Pzt</span></label>
+          <label><input type="checkbox" name="day" value="2"><span>Sal</span></label>
+          <label><input type="checkbox" name="day" value="3"><span>Çar</span></label>
+          <label><input type="checkbox" name="day" value="4"><span>Per</span></label>
+          <label><input type="checkbox" name="day" value="5"><span>Cum</span></label>
+          <label><input type="checkbox" name="day" value="6"><span>Cmt</span></label>
+          <label><input type="checkbox" name="day" value="0"><span>Paz</span></label>
+        </fieldset>
+        <label class="check"><input type="checkbox" name="notify"> Windows bildirimleri</label>
+        <label class="check"><input type="checkbox" name="autostart"> Windows açılınca başlat</label>
+        <details>
+          <summary>Gelişmiş</summary>
+          <label><span>TfL app key <small>· isteğe bağlı</small></span>
+            <input name="appKey" placeholder="api-portal.tfl.gov.uk">
+          </label>
+          <button type="button" id="btn-quit" class="link">Lizzie'yi kapat</button>
+        </details>
+        <p id="form-error" class="form-error" hidden></p>
+        <div class="actions">
+          <button type="button" id="btn-cancel" class="ghost">Vazgeç</button>
+          <button type="submit" class="primary">Kaydet</button>
+        </div>
+        <datalist id="stations"></datalist>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

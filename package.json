@@ -1,0 +1,17 @@
+{
+  "name": "lizzie",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Elizabeth line ile eve dönüş saatini hatırlatan minicik Windows widget'ı",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "@fontsource/nunito": "^5.3.0",
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}
