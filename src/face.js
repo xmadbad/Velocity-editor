@@ -1,55 +1,26 @@
-// Lizzie'nin yüzü: önden bakan minik mor bir tren. Ruh hali, kök <svg>'ye verilen
-// m-happy / m-calm / m-alert / m-worried / m-sad / m-sleepy sınıfıyla değişir (style.css).
+// Lizzie'nin yüzü: önden bakan sade bir mor tren. Açık renk camın üstünde iki göz,
+// gövdede bir ağız; 34 pikselde de okunsun diye başka süs yok. Ruh hali kök <svg>'ye
+// verilen m-happy / m-calm / m-alert / m-worried / m-sad / m-sleepy sınıfıyla değişir.
 
 const INK = '#2A2342';
+const eyes = (body) => `fill="none" stroke="${INK}" stroke-width="2" stroke-linecap="round">${body}`;
+const mouth = 'fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"';
 
 export const FACE_SVG = `
-<svg class="face" viewBox="0 0 64 64" aria-hidden="true">
-  <rect class="rail" x="4" y="59.5" width="56" height="2" rx="1"/>
+<svg class="face" viewBox="0 0 40 40" aria-hidden="true">
   <g class="bob">
-    <rect class="body" x="9" y="6" width="46" height="49" rx="15"/>
-    <rect x="24" y="9.2" width="16" height="3.2" rx="1.6" fill="#CDBDF6"/>
-    <rect x="14" y="15" width="36" height="20.5" rx="8.5" fill="${INK}"/>
-    <g class="e-open">
-      <ellipse cx="25" cy="25.5" rx="3.7" ry="4.5" fill="#fff"/>
-      <ellipse cx="39" cy="25.5" rx="3.7" ry="4.5" fill="#fff"/>
-      <circle cx="25.5" cy="26.2" r="2.4" fill="${INK}"/>
-      <circle cx="39.5" cy="26.2" r="2.4" fill="${INK}"/>
-      <circle cx="26.5" cy="25" r=".9" fill="#fff"/>
-      <circle cx="40.5" cy="25" r=".9" fill="#fff"/>
-    </g>
-    <g class="e-happy" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round">
-      <path d="M21.2 27.5 Q25 21.8 28.8 27.5"/>
-      <path d="M35.2 27.5 Q39 21.8 42.8 27.5"/>
-    </g>
-    <g class="e-closed" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
-      <path d="M21.5 25.5 Q25 28.8 28.5 25.5"/>
-      <path d="M35.5 25.5 Q39 28.8 42.5 25.5"/>
-    </g>
-    <g class="brows" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round">
-      <path d="M21 20.6 L28 18.8"/>
-      <path d="M43 20.6 L36 18.8"/>
-    </g>
-    <ellipse cx="18.3" cy="42.5" rx="3.6" ry="2.2" fill="#FF9EC7" opacity=".8"/>
-    <ellipse cx="45.7" cy="42.5" rx="3.6" ry="2.2" fill="#FF9EC7" opacity=".8"/>
-    <path class="mo-smile" d="M28 41 Q32 45.2 36 41" fill="none" stroke="${INK}" stroke-width="2.2" stroke-linecap="round"/>
-    <g class="mo-grin">
-      <path d="M27 40.3 Q32 48.5 37 40.3 Z" fill="${INK}" stroke="${INK}" stroke-width="1" stroke-linejoin="round"/>
-      <ellipse cx="32" cy="44.6" rx="2.3" ry="1.2" fill="#FF8FB1"/>
-    </g>
-    <ellipse class="mo-o" cx="32" cy="42.6" rx="2.5" ry="2.9" fill="${INK}"/>
-    <path class="mo-wavy" d="M27 43 q1.25 -1.8 2.5 0 t2.5 0 t2.5 0 t2.5 0" fill="none" stroke="${INK}" stroke-width="2" stroke-linecap="round"/>
-    <path class="mo-frown" d="M28 44.2 Q32 40 36 44.2" fill="none" stroke="${INK}" stroke-width="2.2" stroke-linecap="round"/>
-    <circle class="lamp" cx="16.5" cy="49" r="2.3"/>
-    <circle class="lamp" cx="47.5" cy="49" r="2.3"/>
-    <rect x="15" y="54" width="34" height="4" rx="2" fill="${INK}" opacity=".85"/>
-    <path class="x-sweat" d="M52.5 13 C52.5 13 49 17.4 49 19.5 a3.5 3.5 0 0 0 7 0 C56 17.4 52.5 13 52.5 13Z" fill="#8FD8FF"/>
-    <path class="x-tear" d="M43.5 29 C43.5 29 41.3 32 41.3 33.4 a2.2 2.2 0 0 0 4.4 0 C45.7 32 43.5 29 43.5 29Z" fill="#8FD8FF"/>
-    <path class="x-sparkle" d="M56 2.5 L57.3 6.2 L61 7.5 L57.3 8.8 L56 12.5 L54.7 8.8 L51 7.5 L54.7 6.2 Z" fill="#FFD166"/>
-  </g>
-  <g class="x-zzz" fill="currentColor" font-weight="900" font-family="Nunito, sans-serif">
-    <text x="51" y="10" font-size="9">z</text>
-    <text x="57" y="5" font-size="6">z</text>
+    <rect class="body" x="5" y="3" width="30" height="31" rx="10"/>
+    <rect class="glass" x="9" y="7" width="22" height="13" rx="5"/>
+    <g class="e-open" fill="${INK}"><circle cx="15.5" cy="13.5" r="2.2"/><circle cx="24.5" cy="13.5" r="2.2"/></g>
+    <g class="e-happy" ${eyes('<path d="M13.3 14.6 Q15.5 11.2 17.7 14.6"/><path d="M22.3 14.6 Q24.5 11.2 26.7 14.6"/>')}</g>
+    <g class="e-closed" ${eyes('<path d="M13.5 13.8 H17.5"/><path d="M22.5 13.8 H26.5"/>')}</g>
+    <path class="mo-smile" d="M16 24.2 Q20 28.2 24 24.2" ${mouth}/>
+    <path class="mo-flat" d="M16.5 25.6 H23.5" ${mouth}/>
+    <path class="mo-frown" d="M16 27 Q20 23.2 24 27" ${mouth}/>
+    <ellipse class="mo-o" cx="20" cy="25.4" rx="2.1" ry="2.5" fill="#fff"/>
+    <circle class="lamp" cx="10.5" cy="29.5" r="1.9"/>
+    <circle class="lamp" cx="29.5" cy="29.5" r="1.9"/>
+    <rect x="11" y="34" width="18" height="3" rx="1.5" fill="${INK}"/>
   </g>
 </svg>`;
 

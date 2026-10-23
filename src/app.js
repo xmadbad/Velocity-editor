@@ -409,7 +409,7 @@ function watchStatus() {
   store.set(key, s.level);
   if (prev === null && s.level === 'good') return;
   if (s.level === 'good') say('✨ Hat düzeldi', 'Elizabeth line yeniden iyi serviste. Plan normale döndü.', 'Plan normale döndü');
-  else say(`${s.level === 'minor' ? '😿' : '🚨'} Hat: ${LEVEL_TEXT[s.level]}`, s.reason || s.desc, 'Detay için tıkla');
+  else say({ minor: '😿 Hatta aksaklık', bad: '🚨 Ciddi aksaklık', closed: '⛔ Hat durdu' }[s.level], s.reason || s.desc, 'Detay için tıkla');
   nextPlans = 0; // hat bozulduysa B planını ve bisikleti hemen tazele
 }
 

@@ -88,17 +88,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: relative;
   width: 40px;
   height: 40px;
-  border-radius: 14px;
-  background: var(--lilac);
   display: grid;
   place-items: center;
   color: var(--muted);
 }
-.avatar .face { width: 34px; height: 34px; overflow: visible; }
+.avatar .face { width: 40px; height: 40px; overflow: visible; }
 .dot {
   position: absolute;
-  right: -3px;
-  bottom: -3px;
+  right: -1px;
+  top: 0;
   width: 11px;
   height: 11px;
   border-radius: 50%;
@@ -201,33 +199,29 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ------------------------------------------------------------------ yüz */
 
 .face .body { fill: var(--purple); }
-.face .rail { fill: var(--line); }
-.face .lamp { fill: #FFE58A; }
-.face .e-open, .face .e-happy, .face .e-closed, .face .brows,
-.face .mo-smile, .face .mo-grin, .face .mo-o, .face .mo-wavy, .face .mo-frown,
-.face .x-sweat, .face .x-tear, .face .x-sparkle, .face .x-zzz { display: none; }
+.face .glass { fill: #F1ECFF; }
+.face .lamp { fill: #FFD966; }
+.face .e-open, .face .e-happy, .face .e-closed,
+.face .mo-smile, .face .mo-flat, .face .mo-frown, .face .mo-o { display: none; }
 
-.m-happy .e-happy, .m-happy .mo-grin, .m-happy .x-sparkle,
+/* mutlu ^^ gülüş · sakin •• gülüş · telaş •• o · huzursuz •• — · üzgün •• ⌒ · uykulu –– — */
+.m-happy .e-happy, .m-happy .mo-smile,
 .m-calm .e-open, .m-calm .mo-smile,
 .m-alert .e-open, .m-alert .mo-o,
-.m-worried .e-open, .m-worried .brows, .m-worried .mo-wavy, .m-worried .x-sweat,
-.m-sad .e-open, .m-sad .brows, .m-sad .mo-frown, .m-sad .x-tear,
-.m-sleepy .e-closed, .m-sleepy .mo-smile, .m-sleepy .x-zzz { display: inline; }
+.m-worried .e-open, .m-worried .mo-flat,
+.m-sad .e-open, .m-sad .mo-frown,
+.m-sleepy .e-closed, .m-sleepy .mo-flat { display: inline; }
 
 .face .bob { animation: bob 3.2s ease-in-out infinite; }
 .face .e-open { transform-box: fill-box; transform-origin: center; animation: blink 5s infinite; }
-.face .x-sparkle { transform-box: fill-box; transform-origin: center; animation: twinkle 1.8s ease-in-out infinite; }
-.face .x-zzz { animation: float 2.6s ease-in-out infinite; }
 .m-alert .bob { animation: hop .45s ease-in-out infinite alternate; }
 .m-sleepy .bob { animation-duration: 5s; }
 .m-sleepy .lamp { fill: #CFC6E4; }
 .shake .bob { animation: shake .35s ease-in-out infinite; }
 
-@keyframes bob { 50% { transform: translateY(-1.5px); } }
-@keyframes hop { to { transform: translateY(-2.5px); } }
+@keyframes bob { 50% { transform: translateY(-1px); } }
+@keyframes hop { to { transform: translateY(-2px); } }
 @keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
-@keyframes twinkle { 50% { transform: scale(.6) rotate(20deg); opacity: .6; } }
-@keyframes float { 50% { transform: translateY(-2px); opacity: .6; } }
 @keyframes shake { 25% { transform: translateX(-1.2px) rotate(-2deg); } 75% { transform: translateX(1.2px) rotate(2deg); } }
 
 /* ------------------------------------------------------------------ panel */
