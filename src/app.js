@@ -1,7 +1,8 @@
 // Lizzie arayüzü: TfL'yi yoklar, hapı ve paneli çizer, hatırlatır, değişince haber verir.
 import {
   BIKE_OVERHEAD_MIN, DEFAULTS, LEVEL_TEXT, MAX_ACCURACY_M, MIN, Tracker, atTime, atToday,
-  bestAlternative, bestJourney, bikeVerdict, buildRoutes, parseHHMM, planBNeeded, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
+  bestAlternative, bestJourney, bikeVerdict, buildRoutes, nearestStation, parseHHMM, placeOptions,
+  planBNeeded, walkMinutes, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
   nameIndex, nearbyVehicles, parseStatus, plan, stationsFromStopPoints, trainsForTrip,
 } from './logic.js';
 import { FACE_SVG, MINI_TRAIN } from './face.js';
@@ -49,6 +50,7 @@ function loadSettings() {
     // ilk sürümde "nereden/nereye" vardı: iş → ev
     Object.assign(saved, { workId: saved.fromId, workName: saved.fromName, homeId: saved.toId, homeName: saved.toName });
   }
+  delete saved.homePostcode; // yerini ev adresi aldı
   return { ...DEFAULTS, ...saved };
 }
 
@@ -79,10 +81,11 @@ const state = {
 
 // ------------------------------------------------------------------ TfL
 
-async function getJSON(url, label) {
+// allow300: TfL rota planlayıcısı belirsiz yerler için 300 + seçenek listesi döner.
+async function getJSON(url, label, { allow300 = false } = {}) {
   try {
     const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw Object.assign(new Error(`${label} HTTP ${res.status}`), { http: res.status });
+    if (!res.ok && !(allow300 && res.status === 300)) throw Object.assign(new Error(`${label} HTTP ${res.status}`), { http: res.status });
     return await res.json();
   } catch (e) {
     if (e.http || !invoke) throw e;
@@ -90,9 +93,9 @@ async function getJSON(url, label) {
   }
 }
 
-function tfl(path) {
+function tfl(path, opts) {
   const sep = path.includes('?') ? '&' : '?';
-  return getJSON(API + path + (settings.appKey ? `${sep}app_key=${encodeURIComponent(settings.appKey)}` : ''), 'TfL');
+  return getJSON(API + path + (settings.appKey ? `${sep}app_key=${encodeURIComponent(settings.appKey)}` : ''), 'TfL', opts);
 }
 
 async function ensureStations(force = false) {
@@ -205,20 +208,23 @@ async function refreshPlans() {
   const j = journey(now);
   if (!j.to) return;
   loadingPlans = true;
-  const from = j.source === 'location' && state.pos ? `${state.pos.lat.toFixed(5)},${state.pos.lon.toFixed(5)}` : j.from.id;
-  const to = j.dir === 'home' && settings.homePostcode ? settings.homePostcode.replace(/\s+/g, '') : j.to.id;
+  // Kapıdan kapıya: bulunduğun yer (ya da iş/ev adresi) → gideceğin adres; yoksa duraklar.
+  const latlon = (p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`;
+  const here = j.source === 'location' && state.pos ? state.pos : j.fromPlace;
+  const from = here ? latlon(here) : j.from.id;
+  const to = j.toPlace ? latlon(j.toPlace) : j.to.id;
   const target = currentPlan(now, j)?.target;
   const L = parseHHMM(j.leaveAt) ? atToday(now, j.leaveAt) : now;
   const departAt = target && target.leaveBy > now ? target.leaveBy : Math.max(now, L);
   const d = new Date(departAt);
   const when = `date=${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}&time=${pad2(d.getHours())}${pad2(d.getMinutes())}&timeIs=Departing`;
   const base = `/Journey/JourneyResults/${place(from)}/to/${place(to)}?${when}`;
-  const info = { key: journeyKey(j), departAt, bikeMin: NaN, trainMin: NaN, trainArrive: NaN, alt: null, error: '' };
+  const info = { key: journeyKey(j), departAt, bikeMin: NaN, trainMin: NaN, trainArrive: NaN, rail: null, alt: null, error: '' };
   let failure = null;
   const ask = (query) => tfl(`${base}&${query}`).catch((e) => ((failure = e), null));
   try {
     const [rail, other, cycle] = await Promise.all([
-      ask('mode=elizabeth-line,walking'),
+      ask(`mode=elizabeth-line,${ALT_MODES}`),
       ask(`mode=${ALT_MODES}`),
       settings.bike ? ask('mode=cycle&cyclePreference=AllTheWay&bikeProficiency=Fast') : null,
     ]);
@@ -226,6 +232,7 @@ async function refreshPlans() {
     const bike = bestJourney(cycle);
     info.trainMin = train ? train.duration : NaN;
     info.trainArrive = train ? train.arrival : NaN;
+    info.rail = train;
     info.alt = bestAlternative(other);
     info.bikeMin = bike ? bike.duration + BIKE_OVERHEAD_MIN : NaN;
     if (failure && !rail && !other && !cycle) {
@@ -455,7 +462,7 @@ function pillModel(now) {
 
   const t = p.target;
   if (!t) {
-    if (p.early && p.list.length) {
+    if (p.early) {
       return { headline: `${goal} ${fmtTime(L)}`, sub: 'Tahminler birazdan gelir', badge: shortDuration((L - now) / MIN), badgeClass: 's-idle', kind: 'calm', plan: p };
     }
     const v = currentBike(now);
@@ -558,8 +565,11 @@ function renderTimeline(p, now) {
 }
 
 function renderMain(now, m) {
+  // Panelde yalnızca en son ve taze (15 dk) uyarı; gerisi zaten kartlarda yazıyor.
   setHTML($('alerts'), state.alerts
-    .map((a, i) => `<div class="alert"><b>${esc(a.title)}<time>${fmtTime(a.at)}</time></b><span>${esc(a.body)}</span><button data-dismiss="${i}" title="Kapat">×</button></div>`)
+    .slice(0, 1)
+    .filter((a) => now - a.at < 15 * MIN)
+    .map((a) => `<div class="alert"><b>${esc(a.title)}<time>${fmtTime(a.at)}</time></b><span>${esc(a.body)}</span><button data-dismiss="0" title="Kapat">×</button></div>`)
     .join(''));
 
   const s = state.status || { level: 'unknown', desc: '', reason: '' };
@@ -577,7 +587,7 @@ function renderMain(now, m) {
   const tip = p ? insight(p) : '';
   $('insight').hidden = !tip;
   setText($('insight'), tip ? `💡 ${tip}` : '');
-  renderPlanB(now, p);
+  renderRoute(now, p, j);
   renderBike(now, j);
 
   const rows = (p?.list || []).slice(0, 6).map((t) => `
@@ -599,15 +609,35 @@ function renderMain(now, m) {
   setText($('updated'), parts.join(' · '));
 }
 
-function renderPlanB(now, p) {
+// Önerilen yolun adım adım tarifi: Elizabeth line'la ya da (gerekiyorsa) B planıyla.
+function renderRoute(now, p, j) {
+  const pl = freshPlans(now);
   const a = currentAlt(now, p);
-  const show = a && (a.needed || a.fasterBy >= 5);
-  $('alt').hidden = !show;
-  if (!show) return;
-  const { alt } = a;
-  setText($('alt-title'), `🔀 B planı: ${alt.lines.join(' → ')}`);
-  const why = a.needed ? 'Elizabeth line yerine' : `Elizabeth'ten ${a.fasterBy} dk erken`;
-  setText($('alt-sub'), `${atTime(alt.leaveAt)} çık · ${fmtTime(alt.arrive)} varış · ${why}`);
+  const useAlt = a && (a.needed || a.fasterBy >= 5);
+  const r = useAlt ? a.alt : pl?.rail && { ...pl.rail, arrive: pl.rail.arrival };
+  $('route-card').hidden = !r?.steps?.length;
+  if ($('route-card').hidden) return;
+  $('route-card').classList.toggle('alt', Boolean(useAlt));
+
+  // Elizabeth line ile gidiyorsak ilk binişi canlı tahmindeki hedef trenle eşitle.
+  const target = !useAlt && p?.target;
+  const steps = r.steps.map((s) => ({ ...s }));
+  const first = steps.find((s) => s.kind === 'ride');
+  if (target && first?.mode === 'elizabeth-line' && first.from === j.from.name) first.dep = target.time;
+  const leaveAt = target ? target.leaveBy : r.leaveAt;
+
+  setText($('route-title'), `${useAlt ? '🔀 B planı' : '🧭 Yol tarifi'} · ${atTime(leaveAt)} çık · ${fmtTime(r.arrive)} varış`);
+  setText($('route-why'), useAlt ? (a.needed ? "Elizabeth line'a güvenme" : `Elizabeth'ten ${a.fasterBy} dk erken`) : '');
+  const dest = j.toPlace ? (j.dir === 'work' ? 'iş' : 'ev') : '';
+  setHTML($('steps'), steps.map((s, i) => {
+    if (s.kind === 'walk') {
+      const to = i === steps.length - 1 && dest ? dest : s.to;
+      return `<li class="walk"><i>🚶</i><span>${s.minutes} dk yürü${to ? ` → ${esc(to)}` : ''}</span></li>`;
+    }
+    const head = `<b>${s.transfer ? 'Aktar: ' : ''}${esc(s.line)}</b>${s.direction ? ` · ${esc(s.direction)} yönü` : ''}${s.disrupted ? ' ⚠️' : ''}`;
+    const detail = `Bin ${fmtTime(s.dep)} ${esc(s.from)} → İn ${fmtTime(s.arr)} ${esc(s.to)}${s.stops ? ` · ${s.stops} durak` : ''}`;
+    return `<li class="ride"><i>${s.icon}</i><span>${head}<br><small>${detail}</small></span></li>`;
+  }).join(''));
 }
 
 function renderBike(now, j) {
@@ -746,15 +776,100 @@ function fillStationList() {
   $('stations').innerHTML = state.stations.map((s) => `<option value="${esc(s.name)}"></option>`).join('');
 }
 
+// Ev ve iş yeri seçimi: yazıp Enter/🔍 (TfL'de arar) ya da oradayken 📍.
+const picked = { home: null, work: null };
+const placeBox = (kind) => form.querySelector(`.place[data-kind="${kind}"]`);
+
+function showPicked(kind) {
+  const p = picked[kind];
+  const el = placeBox(kind).querySelector('.picked');
+  const st = p && nearestStation(p, state.stations);
+  el.classList.toggle('ok', Boolean(p));
+  el.textContent = !p ? 'Yaz ve Enter’a bas ya da oradayken 📍'
+    : st ? `✓ En yakın durak ${st.name}, ~${walkMinutes(st.d)} dk yürüme` : `✓ ${p.label}`;
+}
+
+function pickPlace(kind, place) {
+  picked[kind] = { label: place.label, lat: place.lat, lon: place.lon };
+  placeBox(kind).querySelector('input').value = place.label;
+  placeBox(kind).querySelector('.results').hidden = true;
+  showPicked(kind);
+  fitWindow();
+}
+
+async function searchPlace(kind) {
+  const box = placeBox(kind);
+  const q = box.querySelector('input').value.trim();
+  const list = box.querySelector('.results');
+  if (q.length < 2) return;
+  list.hidden = false;
+  list.innerHTML = '<li class="muted">Aranıyor…</li>';
+  fitWindow();
+  try {
+    if (!state.stations.length) await ensureStations().catch(() => {});
+    const resp = await tfl(`/Journey/JourneyResults/${encodeURIComponent(q)}/to/51.5074,-0.1278`, { allow300: true });
+    const options = placeOptions(resp);
+    list.innerHTML = options.length
+      ? options.map((o, i) => `<li><button type="button" data-i="${i}">${esc(o.label)}</button></li>`).join('')
+      : '<li class="muted">Bulamadım, posta kodunu dene</li>';
+    list.onclick = (e) => {
+      const i = e.target.closest('[data-i]')?.dataset.i;
+      if (i != null) pickPlace(kind, options[Number(i)]);
+    };
+  } catch (e) {
+    list.innerHTML = `<li class="muted">${esc(friendlyError(e))}</li>`;
+  }
+  fitWindow();
+}
+
+async function pickHere(kind) {
+  if (!invoke) return formError('Konum yalnızca uygulamada çalışır');
+  try {
+    const [lat, lon] = await invoke('locate');
+    if (!state.stations.length) await ensureStations().catch(() => {});
+    const st = nearestStation({ lat, lon }, state.stations);
+    pickPlace(kind, { label: st ? `Konumum (${st.name} yakını)` : 'Konumum', lat, lon });
+  } catch (e) {
+    formError(String(e).includes('denied') ? 'Konum kapalı: Windows Ayarlar › Gizlilik › Konum' : 'Konum alınamadı');
+  }
+}
+
+form.addEventListener('click', (e) => {
+  const btn = e.target.closest('.place [data-act]');
+  if (!btn) return;
+  const kind = btn.closest('.place').dataset.kind;
+  if (btn.dataset.act === 'search') searchPlace(kind);
+  else pickHere(kind);
+});
+form.addEventListener('keydown', (e) => {
+  const box = e.target.closest('.place');
+  if (box && e.key === 'Enter') {
+    e.preventDefault();
+    searchPlace(box.dataset.kind);
+  }
+});
+form.addEventListener('input', (e) => {
+  const box = e.target.closest('.place');
+  if (!box) return;
+  picked[box.dataset.kind] = null; // yazı değişti: yeniden seçilmeli
+  showPicked(box.dataset.kind);
+});
+
 function fillSettings() {
   formError('');
   fillStationList();
-  form.work.value = settings.workName;
-  form.home.value = settings.homeName;
+  for (const kind of ['home', 'work']) {
+    picked[kind] = settings[kind];
+    placeBox(kind).querySelector('input').value = settings[kind]?.label || '';
+    placeBox(kind).querySelector('.results').hidden = true;
+    showPicked(kind);
+  }
+  // Adres seçilmemişse (eski kurulum) ya da durak elle sabitlendiyse Gelişmiş'te görünsün.
+  form.homeStation.value = settings.homeFixed || !settings.home ? settings.homeName : '';
+  form.workStation.value = settings.workFixed || !settings.work ? settings.workName : '';
   form.useLocation.checked = settings.useLocation;
   form.useLocation.disabled = !invoke;
   form.bike.checked = settings.bike;
-  form.postcode.value = settings.homePostcode;
   form.walk.value = settings.walkMin;
   form.leave.value = settings.leaveAt;
   form.morning.value = settings.morningAt;
@@ -764,9 +879,13 @@ function fillSettings() {
   for (const box of form.querySelectorAll('[name="day"]')) box.checked = settings.days.includes(Number(box.value));
   form.autostart.disabled = !invoke;
   call('autostart', {}).then((on) => (form.autostart.checked = Boolean(on)));
-  if (!state.stations.length) {
-    ensureStations()
-      .then(fillStationList)
+  if (!state.stations.some((s) => Number.isFinite(s.lat))) {
+    ensureStations(true)
+      .then(() => {
+        fillStationList();
+        showPicked('home');
+        showPicked('work');
+      })
       .catch(() => formError('TfL istasyon listesini alamadım. İnternetini kontrol edip tekrar aç.'));
   }
 }
@@ -791,12 +910,21 @@ const clamp = (n, lo, hi, fallback) => (Number.isFinite(n) ? Math.min(hi, Math.m
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   if (!state.stations.length) return formError('İstasyon listesi henüz gelmedi, birazdan tekrar dene.');
-  const work = findStation(form.work.value);
-  const home = findStation(form.home.value);
-  if (!work || !home) return formError('İstasyonu listeden seç 🙏');
-  if (work.id === home.id) return formError('İş ve ev durağı aynı olamaz 🙂');
-  const postcode = form.postcode.value.trim().toUpperCase();
-  if (postcode && !/^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/.test(postcode)) return formError('Posta kodu tam olmalı, ör. SE18 6HQ');
+  const fixed = (input) => (input.value.trim() ? findStation(input.value) : null);
+  const homeFixed = fixed(form.homeStation);
+  const workFixed = fixed(form.workStation);
+  if ((form.homeStation.value.trim() && !homeFixed) || (form.workStation.value.trim() && !workFixed)) {
+    return formError('Durağı listeden seç ya da boş bırak 🙏');
+  }
+  if (!picked.home && !homeFixed) return formError('Evini seç 🏡 (yaz + Enter ya da 📍)');
+  if (!picked.work && !workFixed) return formError('İş yerini seç 💼 (yaz + Enter ya da 📍)');
+  // Duraklar adresten: birbirine aktarmasız giden en yakın Elizabeth line durakları.
+  const opts = (towardsId) => ({ routes: state.routes, towardsId });
+  let work = workFixed || nearestStation(picked.work, state.stations);
+  const home = homeFixed || nearestStation(picked.home, state.stations, opts(work?.id));
+  if (!workFixed && picked.work) work = nearestStation(picked.work, state.stations, opts(home?.id));
+  if (!work || !home) return formError('Durak listesi gelmedi, birazdan tekrar dene.');
+  if (work.id === home.id) return formError('Ev ve iş aynı durağa düşüyor 🙂');
   const days = [...form.querySelectorAll('[name="day"]:checked')].map((b) => Number(b.value));
 
   settings = {
@@ -805,12 +933,15 @@ form.addEventListener('submit', (e) => {
     workName: work.name,
     homeId: home.id,
     homeName: home.name,
+    home: picked.home,
+    work: picked.work,
+    homeFixed: Boolean(homeFixed),
+    workFixed: Boolean(workFixed),
     useLocation: form.useLocation.checked,
     walkMin: clamp(parseInt(form.walk.value, 10), 0, 90, DEFAULTS.walkMin),
     leaveAt: form.leave.value || DEFAULTS.leaveAt,
     morningAt: form.morning.value,
     bike: form.bike.checked,
-    homePostcode: postcode,
     remindMin: clamp(parseInt(form.remind.value, 10), 0, 60, DEFAULTS.remindMin),
     days,
     notify: form.notify.checked,

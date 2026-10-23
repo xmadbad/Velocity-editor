@@ -20,6 +20,12 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
   bulur, yürüme süresini mesafeden hesaplar (sokak payı + perona iniş). Bugün başka bir
   ofisteysen oradan, evdeysen sabah yönünde (eve → işe) hesaplar. Konum kapalı ya da
   bulanıksa ayarlardaki iş durağını ve yürüme süreni kullanır, panelde de nedenini söyler.
+- **Ev ve iş yeri:** Ayarlarda posta kodu, adres ya da durak yazıp Enter'a bas (TfL'de
+  arar) ya da oradayken 📍'ya bas. En yakın Elizabeth line durakları kendiliğinden seçilir
+  (istersen Gelişmiş'ten elle sabitlersin), süreler kapıdan kapıya hesaplanır.
+- **Adım adım tarif:** Panelde "🚶 6 dk yürü → Bond Street · 🟣 Elizabeth line, Abbey Wood
+  yönü: Bin 18:07 Bond Street → İn 18:26 Woolwich, 6 durak · 🚶 5 dk yürü → ev". B planı
+  gerekiyorsa aktarmalarıyla birlikte o yolu gösterir ("Aktar: DLR …").
 - **Elizabeth yoksa B planı:** Hat kapalıysa, eve giden tren görünmüyorsa ya da ciddi
   aksaklıkta başka yol belirgin erken vardırıyorsa, TfL rota planlayıcısından Elizabeth
   line'sız en erken varan yolu (Tube, DLR, Overground, tren, otobüs) bulur. Hap

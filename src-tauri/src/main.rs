@@ -79,7 +79,8 @@ async fn http_get(url: String) -> Result<String, String> {
     let res = client.get(&url).send().await.map_err(err)?;
     let status = res.status();
     let body = res.text().await.map_err(err)?;
-    if status.is_success() {
+    // 300: TfL rota planlayıcısının "şunlardan hangisi?" listesi, o da veri.
+    if status.is_success() || status.as_u16() == 300 {
         Ok(body)
     } else {
         Err(format!("HTTP {}", status.as_u16()))

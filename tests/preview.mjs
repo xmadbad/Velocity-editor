@@ -24,7 +24,8 @@ const server = createServer(async (req, res) => {
 const base = `http://localhost:${server.address().port}/`;
 
 const at = (h, m) => new Date(2026, 9, 23, h, m).getTime(); // Cuma
-const SETTINGS = { workId: '910GBONDST', workName: 'Bond Street', homeId: '910GWOLWXR', homeName: 'Woolwich', useLocation: true, walkMin: 8, leaveAt: '18:00', morningAt: '08:30', remindMin: 5, days: [1, 2, 3, 4, 5], notify: true, appKey: '' };
+const SETTINGS = { workId: '910GBONDST', workName: 'Bond Street', homeId: '910GWOLWXR', homeName: 'Woolwich', useLocation: true,
+  home: { label: 'SE18 6HQ', lat: 51.4895, lon: 0.0660 }, work: { label: '1 Oxford Street', lat: 51.5152, lon: -0.1470 }, walkMin: 8, leaveAt: '18:00', morningAt: '08:30', remindMin: 5, days: [1, 2, 3, 4, 5], notify: true, appKey: '' };
 const STOPS = [
   ['910GBONDST', 'Bond Street', 51.5142, -0.1494], ['910GTOTCTRD', 'Tottenham Court Road', 51.5165, -0.1310],
   ['910GWOLWXR', 'Woolwich (Elizabeth line)', 51.4917, 0.0714], ['910GABWDXR', 'Abbey Wood (London) Rail Station', 51.4910, 0.1213],
@@ -37,12 +38,32 @@ const status = (sev, desc, reason) => [{ id: 'elizabeth', lineStatuses: [{ statu
 const GOOD = status(10, 'Good Service');
 const CLOSED = status(3, 'Part Suspended', 'ELIZABETH LINE: No service between Paddington and Abbey Wood due to a signal failure at Whitechapel.');
 const journeyResp = (min, mode) => ({ journeys: [{ duration: min, arrivalDateTime: '2026-10-23T18:40:00', legs: [{ mode: { id: 'walking' } }, { mode: { id: mode } }] }] });
-// Elizabeth line'sız en iyi yolculuk: Jubilee → DLR (sahnenin saatine göre)
-const altResp = (now) => {
-  const t = (m) => new Date(now + m * 60_000).toLocaleString('sv-SE', { timeZone: 'Europe/London' }).replace(' ', 'T');
-  const leg = (id, name) => ({ mode: { id }, routeOptions: name ? [{ name }] : [], instruction: { summary: '' } });
-  return { journeys: [{ startDateTime: t(3), arrivalDateTime: t(44), duration: 41, legs: [leg('walking'), leg('tube', 'Jubilee'), leg('dlr', 'DLR'), leg('walking')] }] };
-};
+// TfL rota planlayıcısı yanıtları (sahnenin saatine göre dakika ofsetleriyle)
+const stamp = (now, m) => new Date(now + m * 60_000).toLocaleString('sv-SE', { timeZone: 'Europe/London' }).replace(' ', 'T');
+const walkLeg = (now, a, b, to) => ({ mode: { id: 'walking' }, duration: b - a, arrivalPoint: { commonName: to }, departureTime: stamp(now, a), arrivalTime: stamp(now, b) });
+const rideLeg = (now, id, name, dir, from, to, a, b, stops) => ({
+  mode: { id }, duration: b - a, routeOptions: [{ name, directions: [dir] }],
+  departurePoint: { commonName: from }, arrivalPoint: { commonName: to },
+  departureTime: stamp(now, a), arrivalTime: stamp(now, b), path: { stopPoints: Array(stops).fill({}) },
+});
+const journey = (now, a, b, legs) => ({ startDateTime: stamp(now, a), arrivalDateTime: stamp(now, b), duration: b - a, legs });
+const railResp = (now, min) => ({ journeys: [journey(now, 17, 17 + min, [
+  walkLeg(now, 17, 23, 'Bond Street Underground Station'),
+  rideLeg(now, 'elizabeth-line', 'Elizabeth line', 'Abbey Wood (London) Rail Station', 'Bond Street', 'Woolwich (Elizabeth line)', 25, 25 + min - 13, 6),
+  walkLeg(now, 25 + min - 13, 17 + min, 'SE18 6HQ'),
+])] });
+const altResp = (now) => ({ journeys: [journey(now, 3, 44, [
+  walkLeg(now, 3, 7, 'Bond Street Underground Station'),
+  rideLeg(now, 'tube', 'Jubilee', 'Stratford Underground Station', 'Bond Street Underground Station', 'Canning Town Underground Station', 8, 24, 8),
+  walkLeg(now, 24, 27, 'Canning Town DLR Station'),
+  rideLeg(now, 'dlr', 'DLR', 'Woolwich Arsenal DLR Station', 'Canning Town DLR Station', 'Woolwich Arsenal DLR Station', 27, 38, 5),
+  walkLeg(now, 38, 44, 'SE18 6HQ'),
+])] });
+const searchResp = { fromLocationDisambiguation: { matchStatus: 'list', disambiguationOptions: [
+  { matchQuality: 990, place: { commonName: 'SE18 6HQ', lat: 51.4895, lon: 0.0660 } },
+  { matchQuality: 700, place: { commonName: 'Woolwich Arsenal DLR Station', lat: 51.4900, lon: 0.0690 } },
+  { matchQuality: 600, place: { commonName: 'Powis Street, Woolwich', lat: 51.4920, lon: 0.0675 } },
+] } };
 const MINOR = status(9, 'Minor Delays', 'ELIZABETH LINE: Minor delays between Paddington and Abbey Wood due to an earlier faulty train at Whitechapel. Tickets are being accepted on London Underground.');
 
 function arrivals(now, mins) {
@@ -74,6 +95,8 @@ const scenes = [
   // Elizabeth line kapalı: en mantıklı başka hat
   { name: '17-planb-pill', time: at(17, 52), arr: () => [], status: CLOSED, pos: [51.5152, -0.1470, 30], bike: [27, 58], alt: true, quiet: true },
   { name: '18-planb-panel', time: at(17, 52), arr: () => [], status: CLOSED, open: 'main', pos: [51.5152, -0.1470, 30], bike: [27, 58], alt: true },
+  // Ayarlar: ev adresini ara
+  { name: '19-settings-search', time: at(12, 0), arr: () => [], status: GOOD, open: 'settings', search: 'SE18 6' },
   { name: '13-location-denied', time: at(17, 42), arr: (n) => EAST(n, [9, 16, 25]), status: GOOD, open: 'main', pos: 'denied' },
   { name: '7-settings', time: at(17, 42), arr: (n) => EAST(n, [9]), status: GOOD, open: 'settings' },
   { name: '8-first-run', time: at(12, 0), arr: () => [], status: GOOD, settings: null },
@@ -117,8 +140,11 @@ for (const sc of scenes) {
     const path = u.pathname;
     const [cycleMin, trainMin] = sc.bike || [35, 41];
     const mode = u.searchParams.get('mode') || '';
+    if (path.includes('/to/51.5074,-0.1278')) {
+      return route.fulfill({ status: 300, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(searchResp) });
+    }
     const body = path.includes('/Journey/') && mode === 'cycle' ? journeyResp(cycleMin, 'cycle')
-      : path.includes('/Journey/') && mode.includes('elizabeth-line') ? journeyResp(trainMin, 'elizabeth-line')
+      : path.includes('/Journey/') && mode.includes('elizabeth-line') ? railResp(sc.time, trainMin)
       : path.includes('/Journey/') ? (sc.alt ? altResp(sc.time) : { journeys: [] })
       : path.endsWith('/Status') ? sc.status
       : path.endsWith('/StopPoints') ? STOPS
@@ -130,7 +156,14 @@ for (const sc of scenes) {
   await page.goto(base);
   await page.waitForTimeout(600);
   if (sc.open === 'main') await page.click('#headline');
-  if (sc.open === 'settings') { await page.click('#headline'); await page.click('#btn-settings'); }
+  if (sc.open === 'settings') {
+    await page.click('#headline');
+    if (await page.locator('#btn-settings').isVisible()) await page.click('#btn-settings');
+  }
+  if (sc.search) {
+    await page.fill('[name="homeQ"]', sc.search);
+    await page.press('[name="homeQ"]', 'Enter');
+  }
   if (sc.alert) await page.clock.fastForward(31_000);
   await page.waitForTimeout(900);
   if (sc.quiet) await page.clock.fastForward(30_000); // uyarı balonu sönsün, hapın kendisi görünsün

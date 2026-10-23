@@ -4,7 +4,7 @@ import {
   buildRoutes, trainsForTrip, stationsFromStopPoints, nameIndex, cleanStationName,
   parseStatus, plan, insight, locSuffix, atTime, dayMode, Tracker, MIN, DEFAULTS,
   chooseTrip, distanceM, walkMinutes, bestJourney, bikeVerdict, nearbyVehicles,
-  bestAlternative, planBNeeded,
+  bestAlternative, planBNeeded, journeySteps, placeOptions, nearestStation,
 } from '../src/logic.js';
 import { routeSequenceEast, routeSequenceBranchesOnly, stopPoints, arrivalsAtBondStreet } from './fixtures.js';
 
@@ -289,4 +289,66 @@ test('B planı ne zaman öne çıkar', () => {
   assert.equal(planBNeeded({ alt, level: 'bad', hasTrains: true, trainArrive: at(18, 50) }), true);
   assert.equal(planBNeeded({ alt, level: 'bad', hasTrains: true, trainArrive: at(18, 37) }), false);
   assert.equal(planBNeeded({ alt, level: 'minor', hasTrains: true, trainArrive: at(19, 0) }), false);
+});
+
+// ------------------------------------------------------------------ ev / iş ve yol tarifi
+
+test('yol tarifi: yürü, bin, in, aktar', () => {
+  const j = {
+    startDateTime: '2026-10-23T17:55:00', arrivalDateTime: '2026-10-23T18:36:00', duration: 41,
+    legs: [
+      { mode: { id: 'walking' }, duration: 3, arrivalPoint: { commonName: 'Bond Street Underground Station' } },
+      { mode: { id: 'walking' }, duration: 0.4, arrivalPoint: { commonName: 'Bond Street Underground Station' } },
+      { mode: { id: 'tube' }, duration: 16, routeOptions: [{ name: 'Jubilee', directions: ['Stratford Underground Station'] }],
+        departurePoint: { commonName: 'Bond Street Underground Station' }, arrivalPoint: { commonName: 'Canning Town Underground Station' },
+        departureTime: '2026-10-23T17:59:00', arrivalTime: '2026-10-23T18:15:00', path: { stopPoints: [1, 2, 3, 4, 5, 6, 7, 8] } },
+      { mode: { id: 'walking' }, duration: 2, arrivalPoint: { commonName: 'Canning Town DLR Station' } },
+      { mode: { id: 'dlr' }, duration: 12, routeOptions: [{ name: 'DLR', directions: ['Woolwich Arsenal DLR Station'] }],
+        departurePoint: { commonName: 'Canning Town DLR Station' }, arrivalPoint: { commonName: 'Woolwich Arsenal DLR Station' },
+        departureTime: '2026-10-23T18:19:00', arrivalTime: '2026-10-23T18:31:00', path: { stopPoints: [1, 2, 3, 4, 5] } },
+      { mode: { id: 'walking' }, duration: 5, arrivalPoint: { commonName: 'SE18 6HQ' } },
+    ],
+  };
+  const st = journeySteps(j);
+  assert.deepEqual(st.map((x) => x.kind), ['walk', 'ride', 'walk', 'ride', 'walk']);
+  assert.equal(st[0].minutes, 3); // 0.4 dk'lık yürüyüş birleşti
+  assert.equal(st[0].to, 'Bond Street');
+  assert.deepEqual([st[1].line, st[1].direction, st[1].from, st[1].to, st[1].stops, st[1].transfer], ['Jubilee', 'Stratford', 'Bond Street', 'Canning Town', 8, false]);
+  assert.equal(st[1].dep, new Date(2026, 9, 23, 17, 59).getTime());
+  assert.equal(st[3].transfer, true);
+  assert.equal(st[3].icon, '🚈');
+  assert.equal(bestAlternative({ journeys: [j] }).steps.length, 5);
+});
+
+test('yer arama: TfL seçenek listesi ya da tanınan posta kodu', () => {
+  const list = placeOptions({ fromLocationDisambiguation: { matchStatus: 'list', disambiguationOptions: [
+    { matchQuality: 700, place: { commonName: 'Oxford Street, London', lat: 51.515, lon: -0.142 } },
+    { matchQuality: 990, place: { commonName: 'Bond Street Underground Station', lat: 51.514, lon: -0.149 } },
+    { matchQuality: 500, place: { commonName: 'Nowhere' } }, // koordinatsız
+  ] } });
+  assert.deepEqual(list.map((o) => o.label), ['Bond Street Underground Station', 'Oxford Street, London']);
+  const direct = placeOptions({ journeys: [{ legs: [{ departurePoint: { commonName: 'SE18 6HQ', lat: 51.49, lon: 0.07 } }] }] });
+  assert.deepEqual(direct, [{ label: 'SE18 6HQ', lat: 51.49, lon: 0.07 }]);
+  assert.deepEqual(placeOptions({}), []);
+});
+
+test('ev/iş yerine en yakın durak', () => {
+  assert.equal(nearestStation({ lat: 51.4925, lon: 0.0690 }, STATIONS).id, '910GWOLWXR');
+  assert.equal(nearestStation({ lat: 51.5152, lon: -0.1470 }, STATIONS, { routes: routesEast, towardsId: '910GWOLWXR' }).id, '910GBONDST');
+  assert.equal(nearestStation({ lat: 1, lon: 1 }, []), null);
+});
+
+test('konum: ev adresine yakınsan evdesin, tarif kapıya kadar', () => {
+  const s = { ...ME, home: { label: 'Ev', lat: 51.4990, lon: 0.0600 }, work: { label: 'Ofis', lat: 51.5152, lon: -0.1470 } };
+  // Ev, Woolwich durağına ~1 km; en yakın durak başka olsa bile 400 m içindeysen evdesin
+  const t = chooseTrip({ pos: { lat: 51.4992, lon: 0.0605, accuracy: 30 }, stations: STATIONS, routes: routesEast, settings: s, now: at(8, 0) });
+  assert.equal(t.dir, 'work');
+  assert.equal(t.from.id, '910GWOLWXR');
+  assert.deepEqual(t.toPlace, s.work);
+  // Konumsuz akşam: işten eve, yürüme iş yerinden durağa
+  const m = chooseTrip({ pos: null, stations: STATIONS, routes: routesEast, settings: s, now: at(17, 30) });
+  assert.equal(m.dir, 'home');
+  assert.deepEqual(m.fromPlace, s.work);
+  assert.deepEqual(m.toPlace, s.home);
+  assert.ok(m.walkMin >= 4 && m.walkMin <= 8, String(m.walkMin));
 });

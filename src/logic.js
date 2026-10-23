@@ -251,7 +251,8 @@ export const DEFAULTS = {
   homeName: '',
   useLocation: true,
   bike: true, // Lime/Voi e-bisiklet karşılaştırması
-  homePostcode: '', // ev kapısı (isteğe bağlı); yoksa ev durağı
+  home: null, // { label, lat, lon }: ev kapısı
+  work: null, // { label, lat, lon }: iş yeri
   walkMin: 8, // konum yokken masadan perona
   leaveAt: '18:00', // akşam işten çıkış
   morningAt: '', // sabah evden çıkış (isteğe bağlı)
@@ -358,11 +359,12 @@ const goesTo = (routes, fromId, toId) =>
 //     verilmişse öğleden önce işe, sonra eve.
 // pos: { lat, lon, accuracy } | null. prevFromId: az önce seçilen kalkış durağı; konum
 // birkaç metre oynadı diye iki durak arasında gidip gelmeyelim diye ona biraz yapışırız.
+// Dönen yolculukta toPlace/fromPlace, ev ve iş yerinin kendisidir (kapıdan kapıya tarif için).
 export function chooseTrip({ pos, stations = [], routes = [], settings: s, now, prevFromId = '' }) {
   const home = { id: s.homeId, name: s.homeName };
   const work = { id: s.workId, name: s.workName };
-  const toWork = (from, walkMin, extra) => ({ dir: 'work', from, to: work.id ? work : null, walkMin, leaveAt: s.morningAt, ...extra });
-  const toHome = (from, walkMin, extra) => ({ dir: 'home', from, to: home, walkMin, leaveAt: s.leaveAt, ...extra });
+  const toWork = (from, walkMin, extra) => ({ dir: 'work', from, to: work.id ? work : null, toPlace: s.work || null, walkMin, leaveAt: s.morningAt, ...extra });
+  const toHome = (from, walkMin, extra) => ({ dir: 'home', from, to: home, toPlace: s.home || null, walkMin, leaveAt: s.leaveAt, ...extra });
 
   if (pos && pos.accuracy <= MAX_ACCURACY_M) {
     const near = stations
@@ -372,7 +374,11 @@ export function chooseTrip({ pos, stations = [], routes = [], settings: s, now, 
     const nearest = near[0];
     if (nearest && nearest.d <= MAX_STATION_M) {
       const extra = { source: 'location', distM: nearest.d };
-      if (nearest.id === home.id) return toWork(home, walkMinutes(nearest.d), extra);
+      const atHome = (s.home && distanceM(pos, s.home) <= AT_PLACE_M) || nearest.id === home.id;
+      if (atHome) {
+        const homeSt = near.find((st) => st.id === home.id) || nearest;
+        return toWork(home, walkMinutes(homeSt.d), { ...extra, distM: homeSt.d });
+      }
       // Biraz daha uzak ama eve aktarmasız giden bir durak, aktarmalı en yakından iyidir.
       const usable = (st) => !routes.length || goesTo(routes, st.id, home.id);
       const best = near.find((st) => st.d <= nearest.d + 800 && usable(st)) || nearest;
@@ -382,9 +388,49 @@ export function chooseTrip({ pos, stations = [], routes = [], settings: s, now, 
     }
   }
 
-  const walk = Number(s.walkMin) || 0;
+  // Konumsuz: ev/iş yeri biliniyorsa yürüme oradan durağa, yoksa ayardaki süre.
+  const walkFrom = (place, stId) => {
+    const st = stations.find((x) => x.id === stId);
+    return place && st && Number.isFinite(st.lat) ? walkMinutes(distanceM(place, st)) : Number(s.walkMin) || 0;
+  };
   const morning = parseHHMM(s.morningAt) && new Date(now).getHours() < 12;
-  return morning && work.id ? toWork(home, walk, { source: 'manual' }) : toHome(work, walk, { source: 'manual' });
+  return morning && work.id
+    ? toWork(home, walkFrom(s.home, home.id), { source: 'manual', fromPlace: s.home || null })
+    : toHome(work, walkFrom(s.work, work.id), { source: 'manual', fromPlace: s.work || null });
+}
+
+export const AT_PLACE_M = 400; // eve bu kadar yakınsan "evdesin"
+
+// Bir yere (ev/iş) en yakın Elizabeth line durağı; towardsId verilirse oraya aktarmasız
+// giden ve en yakından en fazla 800 m uzak bir durak tercih edilir.
+export function nearestStation(place, stations, { routes = [], towardsId = '' } = {}) {
+  const near = stations
+    .filter((st) => Number.isFinite(st.lat))
+    .map((st) => ({ ...st, d: distanceM(place, st) }))
+    .sort((a, b) => a.d - b.d);
+  if (!near.length) return null;
+  const direct = (st) => !towardsId || !routes.length || goesTo(routes, st.id, towardsId) || goesTo(routes, towardsId, st.id);
+  return near.find((st) => st.d <= near[0].d + 800 && direct(st)) || near[0];
+}
+
+// TfL Journey Planner'ı adres defteri gibi kullanırız: belirsiz bir yer için 300 +
+// seçenek listesi, tanınan bir yer (ör. posta kodu) için doğrudan yolculuk döner.
+export function placeOptions(resp) {
+  const out = [];
+  const add = (name, lat, lon, quality = 0) => {
+    const label = String(name || '').trim();
+    if (label && Number.isFinite(lat) && Number.isFinite(lon) && !out.some((o) => o.label === label)) {
+      out.push({ label, lat, lon, quality });
+    }
+  };
+  for (const o of resp?.fromLocationDisambiguation?.disambiguationOptions || []) {
+    add(o.place?.commonName, o.place?.lat, o.place?.lon, o.matchQuality || 0);
+  }
+  if (!out.length) {
+    const p = resp?.journeys?.[0]?.legs?.[0]?.departurePoint;
+    if (p) add(p.commonName, p.lat, p.lon);
+  }
+  return out.sort((a, b) => b.quality - a.quality).slice(0, 6).map(({ label, lat, lon }) => ({ label, lat, lon }));
 }
 
 // ---------------------------------------------------------------- e-bisiklet (Lime / Voi)
@@ -400,9 +446,48 @@ export function bestJourney(resp, needMode = '') {
     const modes = (j.legs || []).map((l) => l.mode?.id);
     if (needMode && !modes.includes(needMode)) continue;
     if (!Number.isFinite(j.duration)) continue;
-    if (!best || j.duration < best.duration) best = { duration: j.duration, arrival: Date.parse(j.arrivalDateTime) || 0 };
+    if (!best || j.duration < best.duration) {
+      best = { duration: j.duration, arrival: Date.parse(j.arrivalDateTime) || 0, leaveAt: Date.parse(j.startDateTime), steps: journeySteps(j) };
+    }
   }
   return best;
+}
+
+// ---------------------------------------------------------------- yol tarifi
+
+const RIDE_ICON = { 'elizabeth-line': '🟣', tube: '🚇', dlr: '🚈', overground: '🟠', 'national-rail': '🚆', bus: '🚌', tram: '🚊', 'river-bus': '⛴️', 'cable-car': '🚡', cycle: '🚲' };
+
+// Bir TfL yolculuğunu "yürü / bin / in / aktar" adımlarına çevirir.
+export function journeySteps(j) {
+  const steps = [];
+  for (const leg of j?.legs || []) {
+    const mode = leg.mode?.id || '';
+    const minutes = Math.round(leg.duration || 0);
+    if (mode === 'walking') {
+      const last = steps[steps.length - 1];
+      const to = cleanStationName(leg.arrivalPoint?.commonName || '');
+      if (last?.kind === 'walk') Object.assign(last, { minutes: last.minutes + minutes, to });
+      else steps.push({ kind: 'walk', minutes, to });
+      continue;
+    }
+    const dir = ((leg.routeOptions || [])[0]?.directions || [])[0] || '';
+    steps.push({
+      kind: 'ride',
+      mode,
+      icon: RIDE_ICON[mode] || '🚉',
+      line: legName(leg),
+      direction: dir ? cleanStationName(dir) : '',
+      from: cleanStationName(leg.departurePoint?.commonName || ''),
+      to: cleanStationName(leg.arrivalPoint?.commonName || ''),
+      dep: Date.parse(leg.departureTime),
+      arr: Date.parse(leg.arrivalTime),
+      stops: (leg.path?.stopPoints || []).length,
+      minutes,
+      transfer: steps.some((s) => s.kind === 'ride'),
+      disrupted: Boolean(leg.isDisrupted),
+    });
+  }
+  return steps.filter((st) => st.kind !== 'walk' || st.minutes >= 1);
 }
 
 // Trenle mi e-bisikletle mi? Kapıdan kapıya dakikalar (bisiklete bulma/park payı dahil).
@@ -457,7 +542,7 @@ export function bestAlternative(resp) {
       const name = legName(leg);
       if (lines[lines.length - 1] !== name) lines.push(name);
     }
-    best = { lines, leaveAt: Date.parse(j.startDateTime), arrive, duration: j.duration };
+    best = { lines, leaveAt: Date.parse(j.startDateTime), arrive, duration: j.duration, steps: journeySteps(j) };
   }
   return best;
 }

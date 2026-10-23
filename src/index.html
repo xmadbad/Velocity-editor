@@ -33,9 +33,10 @@
           <div id="tl-track" class="tl-track"></div>
         </div>
         <p id="insight" class="insight" hidden></p>
-        <div id="alt" class="alt" hidden>
-          <div id="alt-title" class="bike-title"></div>
-          <div id="alt-sub" class="bike-sub"></div>
+        <div id="route-card" class="route" hidden>
+          <div id="route-title" class="route-title"></div>
+          <div id="route-why" class="route-why"></div>
+          <ol id="steps" class="steps"></ol>
         </div>
         <div id="bike" class="bike" hidden>
           <div id="bike-title" class="bike-title"></div>
@@ -54,20 +55,28 @@
 
       <form id="view-settings" class="view settings" hidden autocomplete="off">
         <h3>Ayarlar ✨</h3>
-        <div class="two">
-          <label><span>İş durağı</span>
-            <input name="work" list="stations" placeholder="ör. Bond Street" required>
+        <div class="place" data-kind="home">
+          <label><span>🏡 Ev</span>
+            <div class="place-row">
+              <input name="homeQ" placeholder="Posta kodu, adres ya da durak" spellcheck="false">
+              <button type="button" class="icon" data-act="search" title="Ara (Enter)">🔍</button>
+              <button type="button" class="icon" data-act="here" title="Şu an buradayım">📍</button>
+            </div>
           </label>
-          <label><span>Ev durağı</span>
-            <input name="home" list="stations" placeholder="ör. Woolwich" required>
-          </label>
+          <ul class="results" hidden></ul>
+          <small class="picked"></small>
         </div>
-        <label class="check"><input type="checkbox" name="useLocation"> 📍 Konumumu kullan</label>
-        <p class="hint">Açıkken en yakın duraktan kalkarsın, yürüme süresi mesafeden hesaplanır; evdeysen yön işe döner. Sabah çıkışı boş kalabilir.</p>
-        <label class="check"><input type="checkbox" name="bike"> 🚲 Lime/Voi e-bisikletle kıyasla</label>
-        <label><span>Ev posta kodu <small>· isteğe bağlı, kapıdan kapıya süre için</small></span>
-          <input name="postcode" placeholder="ör. SE18 6HQ" autocapitalize="characters" spellcheck="false">
-        </label>
+        <div class="place" data-kind="work">
+          <label><span>💼 İş</span>
+            <div class="place-row">
+              <input name="workQ" placeholder="Posta kodu, adres ya da durak" spellcheck="false">
+              <button type="button" class="icon" data-act="search" title="Ara (Enter)">🔍</button>
+              <button type="button" class="icon" data-act="here" title="Şu an buradayım">📍</button>
+            </div>
+          </label>
+          <ul class="results" hidden></ul>
+          <small class="picked"></small>
+        </div>
         <div class="two">
           <label title="Genelde kaçta işten çıkıyorsun?"><span>Akşam çıkışım</span>
             <input name="leave" type="time" required>
@@ -77,9 +86,6 @@
           </label>
         </div>
         <div class="two">
-          <label title="Konum yokken: masandan kalkıp perona inmen kaç dakika?"><span>Yürüme <small>dk · konum yokken</small></span>
-            <input name="walk" type="number" min="0" max="90" step="1" required>
-          </label>
           <label title="Çıkmadan kaç dakika önce dürteyim?"><span>Hatırlat <small>dk önce</small></span>
             <input name="remind" type="number" min="0" max="60" step="1">
           </label>
@@ -94,10 +100,23 @@
           <label><input type="checkbox" name="day" value="6"><span>Cmt</span></label>
           <label><input type="checkbox" name="day" value="0"><span>Paz</span></label>
         </fieldset>
+        <label class="check"><input type="checkbox" name="useLocation"> 📍 Konumumu kullan <small>· en yakın duraktan kalk</small></label>
+        <label class="check"><input type="checkbox" name="bike"> 🚲 Lime/Voi e-bisikletle kıyasla</label>
         <label class="check"><input type="checkbox" name="notify"> Windows bildirimleri</label>
         <label class="check"><input type="checkbox" name="autostart"> Windows açılınca başlat</label>
         <details>
           <summary>Gelişmiş</summary>
+          <div class="two">
+            <label><span>Ev durağı</span>
+              <input name="homeStation" list="stations" placeholder="otomatik">
+            </label>
+            <label><span>İş durağı</span>
+              <input name="workStation" list="stations" placeholder="otomatik">
+            </label>
+          </div>
+          <label title="Konum ve iş adresi yokken: masandan kalkıp perona inmen kaç dakika?"><span>Yürüme <small>dk · adres/konum yokken</small></span>
+            <input name="walk" type="number" min="0" max="90" step="1" required>
+          </label>
           <label><span>TfL app key <small>· isteğe bağlı</small></span>
             <input name="appKey" placeholder="api-portal.tfl.gov.uk">
           </label>
