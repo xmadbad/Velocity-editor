@@ -431,6 +431,47 @@ export function nearbyVehicles(feed, pos, radiusM = 400) {
   return { count, nearestM: nearest ? Math.round(nearest.d) : null, rangeM: nearest?.rangeM ?? null };
 }
 
+// ---------------------------------------------------------------- B planı (başka hat)
+
+const MODE_NAME = { 'national-rail': 'Tren', overground: 'Overground', bus: 'Otobüs', tube: 'Tube', dlr: 'DLR', tram: 'Tram' };
+
+function legName(leg) {
+  const mode = leg.mode?.id || '';
+  const route = (leg.routeOptions || []).map((r) => r.name).find(Boolean) || '';
+  if (mode === 'bus') return route ? `Otobüs ${route}` : 'Otobüs';
+  if (route) return route;
+  const summary = String(leg.instruction?.summary || '').split(/\s+(?:to|towards)\s+/i)[0].trim();
+  return summary || MODE_NAME[mode] || mode;
+}
+
+// Elizabeth line'sız en erken varan yolculuk: { lines: ['Jubilee', 'DLR'], leaveAt, arrive, duration }
+export function bestAlternative(resp) {
+  let best = null;
+  for (const j of resp?.journeys || []) {
+    const rides = (j.legs || []).filter((l) => l.mode?.id && l.mode.id !== 'walking');
+    if (!rides.length || rides.some((l) => l.mode.id === 'elizabeth-line')) continue;
+    const arrive = Date.parse(j.arrivalDateTime);
+    if (!Number.isFinite(arrive) || (best && arrive >= best.arrive)) continue;
+    const lines = [];
+    for (const leg of rides) {
+      const name = legName(leg);
+      if (lines[lines.length - 1] !== name) lines.push(name);
+    }
+    best = { lines, leaveAt: Date.parse(j.startDateTime), arrive, duration: j.duration };
+  }
+  return best;
+}
+
+// B planını öne çıkaralım mı? Hat kapalıysa, eve giden tren hiç görünmüyorsa ya da
+// ciddi aksaklıkta başka hat belirgin erken vardırıyorsa.
+export function planBNeeded({ alt, level, hasTrains, early, trainArrive }) {
+  if (!alt) return false;
+  if (level === 'closed') return true;
+  if (!hasTrains && !early) return true;
+  if (level === 'bad') return !Number.isFinite(trainArrive) || alt.arrive <= trainArrive - 2 * MIN;
+  return false;
+}
+
 // ---------------------------------------------------------------- değişiklik takibi
 
 // Hedef treni anketten ankete izler. Saati ≥2 dk kayarsa 'shift', iki ankettir

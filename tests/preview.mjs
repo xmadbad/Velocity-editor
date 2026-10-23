@@ -37,6 +37,12 @@ const status = (sev, desc, reason) => [{ id: 'elizabeth', lineStatuses: [{ statu
 const GOOD = status(10, 'Good Service');
 const CLOSED = status(3, 'Part Suspended', 'ELIZABETH LINE: No service between Paddington and Abbey Wood due to a signal failure at Whitechapel.');
 const journeyResp = (min, mode) => ({ journeys: [{ duration: min, arrivalDateTime: '2026-10-23T18:40:00', legs: [{ mode: { id: 'walking' } }, { mode: { id: mode } }] }] });
+// Elizabeth line'sız en iyi yolculuk: Jubilee → DLR (sahnenin saatine göre)
+const altResp = (now) => {
+  const t = (m) => new Date(now + m * 60_000).toLocaleString('sv-SE', { timeZone: 'Europe/London' }).replace(' ', 'T');
+  const leg = (id, name) => ({ mode: { id }, routeOptions: name ? [{ name }] : [], instruction: { summary: '' } });
+  return { journeys: [{ startDateTime: t(3), arrivalDateTime: t(44), duration: 41, legs: [leg('walking'), leg('tube', 'Jubilee'), leg('dlr', 'DLR'), leg('walking')] }] };
+};
 const MINOR = status(9, 'Minor Delays', 'ELIZABETH LINE: Minor delays between Paddington and Abbey Wood due to an earlier faulty train at Whitechapel. Tickets are being accepted on London Underground.');
 
 function arrivals(now, mins) {
@@ -65,6 +71,9 @@ const scenes = [
   // Hat kısmen durdu: trenler yok, Lime/Voi öner
   { name: '15-bike-closed', time: at(17, 52), arr: () => [], status: CLOSED, pos: [51.5152, -0.1470, 30], bike: [27, 58] },
   { name: '16-bike-closed-panel', time: at(17, 52), arr: () => [], status: CLOSED, open: 'main', pos: [51.5152, -0.1470, 30], bike: [27, 58] },
+  // Elizabeth line kapalı: en mantıklı başka hat
+  { name: '17-planb-pill', time: at(17, 52), arr: () => [], status: CLOSED, pos: [51.5152, -0.1470, 30], bike: [27, 58], alt: true, quiet: true },
+  { name: '18-planb-panel', time: at(17, 52), arr: () => [], status: CLOSED, open: 'main', pos: [51.5152, -0.1470, 30], bike: [27, 58], alt: true },
   { name: '13-location-denied', time: at(17, 42), arr: (n) => EAST(n, [9, 16, 25]), status: GOOD, open: 'main', pos: 'denied' },
   { name: '7-settings', time: at(17, 42), arr: (n) => EAST(n, [9]), status: GOOD, open: 'settings' },
   { name: '8-first-run', time: at(12, 0), arr: () => [], status: GOOD, settings: null },
@@ -79,7 +88,7 @@ for (const sc of scenes) {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error(sc.name, 'pageerror', e.message));
   page.on('console', (m) => m.type() === 'error' && console.error(sc.name, m.text()));
-  if (sc.alert) await page.clock.install({ time: sc.time });
+  if (sc.alert || sc.quiet) await page.clock.install({ time: sc.time });
   else await page.clock.setFixedTime(sc.time);
   let polls = 0;
   const s = sc.settings === null ? null : { ...SETTINGS, ...(sc.settings || {}) };
@@ -107,7 +116,10 @@ for (const sc of scenes) {
     const u = new URL(route.request().url());
     const path = u.pathname;
     const [cycleMin, trainMin] = sc.bike || [35, 41];
-    const body = path.includes('/Journey/') ? journeyResp(u.searchParams.get('mode') === 'cycle' ? cycleMin : trainMin, u.searchParams.get('mode') === 'cycle' ? 'cycle' : 'elizabeth-line')
+    const mode = u.searchParams.get('mode') || '';
+    const body = path.includes('/Journey/') && mode === 'cycle' ? journeyResp(cycleMin, 'cycle')
+      : path.includes('/Journey/') && mode.includes('elizabeth-line') ? journeyResp(trainMin, 'elizabeth-line')
+      : path.includes('/Journey/') ? (sc.alt ? altResp(sc.time) : { journeys: [] })
       : path.endsWith('/Status') ? sc.status
       : path.endsWith('/StopPoints') ? STOPS
       : path.includes('/Route/Sequence/outbound') ? routeSequenceEast
@@ -121,6 +133,7 @@ for (const sc of scenes) {
   if (sc.open === 'settings') { await page.click('#headline'); await page.click('#btn-settings'); }
   if (sc.alert) await page.clock.fastForward(31_000);
   await page.waitForTimeout(900);
+  if (sc.quiet) await page.clock.fastForward(30_000); // uyarı balonu sönsün, hapın kendisi görünsün
   await page.locator('#app').screenshot({ path: join(out, `${sc.name}.png`), omitBackground: true });
   console.log('ok', sc.name, await page.locator('#headline').textContent(), '|', await page.locator('#sub').textContent(), '|', await page.locator('#badge').textContent());
   await ctx.close();

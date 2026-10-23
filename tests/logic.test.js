@@ -4,6 +4,7 @@ import {
   buildRoutes, trainsForTrip, stationsFromStopPoints, nameIndex, cleanStationName,
   parseStatus, plan, insight, locSuffix, atTime, dayMode, Tracker, MIN, DEFAULTS,
   chooseTrip, distanceM, walkMinutes, bestJourney, bikeVerdict, nearbyVehicles,
+  bestAlternative, planBNeeded,
 } from '../src/logic.js';
 import { routeSequenceEast, routeSequenceBranchesOnly, stopPoints, arrivalsAtBondStreet } from './fixtures.js';
 
@@ -253,4 +254,39 @@ test('GBFS: yakındaki kullanılabilir bisikletler', () => {
   assert.equal(r.count, 2);
   assert.ok(r.nearestM >= 30 && r.nearestM <= 36, String(r.nearestM));
   assert.equal(r.rangeM, 21000);
+});
+
+// ------------------------------------------------------------------ B planı
+
+const leg = (id, name, summary) => ({ mode: { id }, routeOptions: name ? [{ name }] : [], instruction: { summary: summary || '' } });
+
+test('B planı: Elizabeth line olmadan en erken varan', () => {
+  const resp = { journeys: [
+    { startDateTime: '2026-10-23T17:55:00', arrivalDateTime: '2026-10-23T18:41:00', duration: 46,
+      legs: [leg('walking'), leg('tube', 'Jubilee'), leg('dlr', 'DLR'), leg('dlr', 'DLR'), leg('walking')] },
+    { startDateTime: '2026-10-23T17:52:00', arrivalDateTime: '2026-10-23T18:36:00', duration: 44,
+      legs: [leg('walking'), leg('tube', 'Jubilee'), leg('national-rail', '', 'Southeastern to Woolwich Arsenal'), leg('walking')] },
+    { startDateTime: '2026-10-23T17:50:00', arrivalDateTime: '2026-10-23T18:20:00', duration: 30,
+      legs: [leg('walking'), leg('elizabeth-line', 'Elizabeth line')] }, // Elizabeth: sayılmaz
+    { startDateTime: '2026-10-23T17:50:00', arrivalDateTime: '2026-10-23T19:30:00', duration: 100,
+      legs: [leg('bus', '53'), leg('walking')] },
+    { startDateTime: '2026-10-23T17:50:00', arrivalDateTime: '2026-10-23T18:10:00', duration: 20, legs: [leg('walking')] }, // yalnız yürüyüş
+  ] };
+  const alt = bestAlternative(resp);
+  assert.deepEqual(alt.lines, ['Jubilee', 'Southeastern']);
+  assert.equal(alt.leaveAt, new Date(2026, 9, 23, 17, 52).getTime());
+  assert.equal(alt.duration, 44);
+  assert.deepEqual(bestAlternative({ journeys: [resp.journeys[3]] }).lines, ['Otobüs 53']);
+  assert.equal(bestAlternative({}), null);
+});
+
+test('B planı ne zaman öne çıkar', () => {
+  const alt = { arrive: at(18, 36) };
+  assert.equal(planBNeeded({ alt: null, level: 'closed' }), false);
+  assert.equal(planBNeeded({ alt, level: 'closed', hasTrains: true }), true);
+  assert.equal(planBNeeded({ alt, level: 'good', hasTrains: false, early: false }), true); // tren yok
+  assert.equal(planBNeeded({ alt, level: 'good', hasTrains: false, early: true }), false); // henüz erken
+  assert.equal(planBNeeded({ alt, level: 'bad', hasTrains: true, trainArrive: at(18, 50) }), true);
+  assert.equal(planBNeeded({ alt, level: 'bad', hasTrains: true, trainArrive: at(18, 37) }), false);
+  assert.equal(planBNeeded({ alt, level: 'minor', hasTrains: true, trainArrive: at(19, 0) }), false);
 });

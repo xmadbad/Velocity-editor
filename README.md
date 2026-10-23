@@ -20,6 +20,11 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
   bulur, yürüme süresini mesafeden hesaplar (sokak payı + perona iniş). Bugün başka bir
   ofisteysen oradan, evdeysen sabah yönünde (eve → işe) hesaplar. Konum kapalı ya da
   bulanıksa ayarlardaki iş durağını ve yürüme süreni kullanır, panelde de nedenini söyler.
+- **Elizabeth yoksa B planı:** Hat kapalıysa, eve giden tren görünmüyorsa ya da ciddi
+  aksaklıkta başka yol belirgin erken vardırıyorsa, TfL rota planlayıcısından Elizabeth
+  line'sız en erken varan yolu (Tube, DLR, Overground, tren, otobüs) bulur. Hap
+  "17:55'te çık · 🔀 Jubilee → DLR · 18:36 varış" der, bir kez de bildirim gelir. Normal
+  günlerde başka yol 5+ dk daha hızlıysa bunu panelde gösterir.
 - **Lime / Voi e-bisiklet:** Aynı çıkış saati için e-bisikletle (TfL'nin bisiklet
   rotası, "hızlı" sürücü + 4 dk bisikleti bulma/park payı) ve trenle kapıdan kapıya
   süreyi kıyaslar. Hat sorunluysa hap ve bildirim "Lime/Voi ile eve ~31 dk" der. Ev posta
@@ -60,7 +65,7 @@ yönetici izni istemez.
 
 Yalnızca TfL'nin herkese açık Unified API'sine (`api.tfl.gov.uk`) bağlanır:
 `/Line/elizabeth/Arrivals`, `/Line/elizabeth/Status`, `/Line/elizabeth/StopPoints`,
-`/Line/elizabeth/Route/Sequence`, `/Journey/JourneyResults` (bisiklet/tren süresi);
+`/Line/elizabeth/Route/Sequence`, `/Journey/JourneyResults` (B planı, bisiklet/tren süresi);
 e-bisiklet açıksa Lime'ın açık GBFS akışını da dener (`data.lime.bike`). Mesai saatinde 30 sn'de bir, dışında 10 dk'da bir
 yoklar. Konumun yalnızca bilgisayarında, en yakın durağı bulmak için kullanılır; hiçbir
 yere gönderilmez. Ayarlar da bilgisayarında kalır. Anahtarsız çalışır; çok yoğun kullanımda

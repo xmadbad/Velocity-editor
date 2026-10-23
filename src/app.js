@@ -1,7 +1,7 @@
 // Lizzie arayüzü: TfL'yi yoklar, hapı ve paneli çizer, hatırlatır, değişince haber verir.
 import {
   BIKE_OVERHEAD_MIN, DEFAULTS, LEVEL_TEXT, MAX_ACCURACY_M, MIN, Tracker, atTime, atToday,
-  bestJourney, bikeVerdict, buildRoutes, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
+  bestAlternative, bestJourney, bikeVerdict, buildRoutes, parseHHMM, planBNeeded, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
   nameIndex, nearbyVehicles, parseStatus, plan, stationsFromStopPoints, trainsForTrip,
 } from './logic.js';
 import { FACE_SVG, MINI_TRAIN } from './face.js';
@@ -65,7 +65,7 @@ const state = {
   pos: null, // { lat, lon, accuracy }
   posAt: 0,
   posError: '', // '' | 'denied' | 'vague' | 'unavailable'
-  bike: null, // { key, bikeMin, trainMin, departAt, error }: TfL rota planlayıcısından
+  plans: null, // TfL rota planlayıcısından: { key, departAt, bikeMin, trainMin, trainArrive, alt, error }
   lime: null, // yakındaki Lime araçları (akış varsa)
   status: null, // parseStatus sonucu
   fetchedAt: 0,
@@ -189,52 +189,81 @@ function journey(now = Date.now()) {
 }
 const journeyKey = (j) => `${j.from.id}>${j.to?.id || ''}`;
 
-// ------------------------------------------------------------------ e-bisiklet (Lime / Voi)
+// ------------------------------------------------------------------ B planı ve e-bisiklet
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const place = (s) => encodeURIComponent(s).replace(/%2C/gi, ',');
+const ALT_MODES = 'tube,dlr,overground,national-rail,bus,tram,walking';
 
-// Lime/Voi canlı konumları açık olmadığı için süreyi TfL'nin bisiklet rotasından alırız
-// ("hızlı" sürücü ≈ e-bisiklet) ve aynı çıkış saati için trenle kıyaslarız.
-let loadingBike = false;
-async function refreshBike() {
-  if (!settings.bike || !configured() || loadingBike) return;
+// TfL rota planlayıcısına aynı çıkış saati için üç soru: Elizabeth line ile, Elizabeth
+// line olmadan (B planı) ve bisikletle. Lime/Voi canlı konumları açık olmadığı için
+// e-bisiklet süresi TfL'nin "hızlı" sürücü bisiklet rotasından gelir.
+let loadingPlans = false;
+async function refreshPlans() {
+  if (!configured() || loadingPlans) return;
   const now = Date.now();
   const j = journey(now);
   if (!j.to) return;
-  loadingBike = true;
+  loadingPlans = true;
   const from = j.source === 'location' && state.pos ? `${state.pos.lat.toFixed(5)},${state.pos.lon.toFixed(5)}` : j.from.id;
   const to = j.dir === 'home' && settings.homePostcode ? settings.homePostcode.replace(/\s+/g, '') : j.to.id;
   const target = currentPlan(now, j)?.target;
-  const departAt = target && target.leaveBy > now ? target.leaveBy : now;
+  const L = parseHHMM(j.leaveAt) ? atToday(now, j.leaveAt) : now;
+  const departAt = target && target.leaveBy > now ? target.leaveBy : Math.max(now, L);
   const d = new Date(departAt);
   const when = `date=${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}&time=${pad2(d.getHours())}${pad2(d.getMinutes())}&timeIs=Departing`;
   const base = `/Journey/JourneyResults/${place(from)}/to/${place(to)}?${when}`;
-  const info = { key: journeyKey(j), departAt, bikeMin: NaN, trainMin: NaN, error: '' };
+  const info = { key: journeyKey(j), departAt, bikeMin: NaN, trainMin: NaN, trainArrive: NaN, alt: null, error: '' };
+  let failure = null;
+  const ask = (query) => tfl(`${base}&${query}`).catch((e) => ((failure = e), null));
   try {
-    const [cycle, train] = await Promise.all([
-      tfl(`${base}&mode=cycle&cyclePreference=AllTheWay&bikeProficiency=Fast`),
-      tfl(`${base}&mode=elizabeth-line,walking`).catch(() => null),
+    const [rail, other, cycle] = await Promise.all([
+      ask('mode=elizabeth-line,walking'),
+      ask(`mode=${ALT_MODES}`),
+      settings.bike ? ask('mode=cycle&cyclePreference=AllTheWay&bikeProficiency=Fast') : null,
     ]);
+    const train = bestJourney(rail, 'elizabeth-line');
     const bike = bestJourney(cycle);
-    const rail = bestJourney(train, 'elizabeth-line');
+    info.trainMin = train ? train.duration : NaN;
+    info.trainArrive = train ? train.arrival : NaN;
+    info.alt = bestAlternative(other);
     info.bikeMin = bike ? bike.duration + BIKE_OVERHEAD_MIN : NaN;
-    info.trainMin = rail ? rail.duration : NaN;
-    if (!bike) info.error = 'bisiklet rotası bulunamadı';
-  } catch (e) {
-    info.error = /HTTP 300/.test(String(e.message)) ? 'TfL posta kodunu tanımadı' : friendlyError(e);
+    if (failure && !rail && !other && !cycle) {
+      info.error = /HTTP 300/.test(String(failure.message)) ? 'TfL posta kodunu tanımadı' : friendlyError(failure);
+    }
   } finally {
-    state.bike = info;
-    loadingBike = false;
-    watchBike();
+    state.plans = info;
+    loadingPlans = false;
+    watchPlanB();
     render();
   }
 }
 
+const freshPlans = (now = Date.now()) => {
+  const pl = state.plans;
+  return pl && !pl.error && pl.key === journeyKey(journey(now)) ? pl : null;
+};
+
 function currentBike(now = Date.now()) {
-  const b = state.bike;
-  if (!settings.bike || !b || b.error || b.key !== journeyKey(journey(now))) return null;
-  return bikeVerdict(b.bikeMin, b.trainMin, state.status?.level);
+  const pl = freshPlans(now);
+  if (!settings.bike || !pl) return null;
+  return bikeVerdict(pl.bikeMin, pl.trainMin, state.status?.level);
+}
+
+// Başka hat önerisi: { alt, needed, fasterBy } — needed: hapta öne çıkar.
+function currentAlt(now = Date.now(), p = currentPlan(now)) {
+  const pl = freshPlans(now);
+  const alt = pl?.alt;
+  if (!alt || alt.leaveAt < now - MIN) return null;
+  const needed = planBNeeded({
+    alt,
+    level: state.status?.level,
+    hasTrains: Boolean(p?.list.length),
+    early: Boolean(p?.early),
+    trainArrive: pl.trainArrive,
+  });
+  const fasterBy = Number.isFinite(pl.trainArrive) ? Math.round((pl.trainArrive - alt.arrive) / MIN) : null;
+  return { alt, needed: Boolean(p) && needed, fasterBy };
 }
 
 let loadingLime = false;
@@ -257,13 +286,25 @@ async function refreshLime() {
   }
 }
 
-function watchBike() {
-  const v = currentBike();
-  const level = state.status?.level;
-  if (!v?.suggest || !isLive() || !(level === 'bad' || level === 'closed') || !once(`bike:${today()}`)) return;
-  const where = journey().dir === 'work' ? 'İşe' : 'Eve';
-  const train = Number.isFinite(v.trainMin) ? `, trenle ~${v.trainMin} dk` : '';
-  say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${v.bikeMin} dk${train}.`, `Hat sorunlu · ${where.toLowerCase()} ~${v.bikeMin} dk`);
+// Elizabeth line işe yaramıyorsa günde bir kez: hangi hatla (ve/veya Lime/Voi ile) git.
+function watchPlanB() {
+  const now = Date.now();
+  if (!isLive(now)) return;
+  const a = currentAlt(now);
+  const v = currentBike(now);
+  const troubled = ['bad', 'closed'].includes(state.status?.level);
+  const bike = v?.suggest && troubled ? v : null;
+  if (!a?.needed && !bike) return;
+  if (!once(`planb:${today(now)}`)) return;
+  const where = journey(now).dir === 'work' ? 'İşe' : 'Eve';
+  if (a?.needed) {
+    const { alt } = a;
+    const extra = bike ? ` Lime/Voi ile ~${bike.bikeMin} dk.` : '';
+    say(`🔀 ${alt.lines.join(' → ')}`, `Elizabeth line'a güvenme. ${atTime(alt.leaveAt)} çık, ${fmtTime(alt.arrive)} gibi ${where === 'Eve' ? 'evdesin' : 'iştesin'}.${extra}`, `${atTime(alt.leaveAt)} çık · ${fmtTime(alt.arrive)} varış`);
+  } else {
+    const train = Number.isFinite(bike.trainMin) ? `, trenle ~${bike.trainMin} dk` : '';
+    say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${bike.bikeMin} dk${train}.`, `Hat sorunlu · ${where.toLowerCase()} ~${bike.bikeMin} dk`);
+  }
 }
 const tripSettings = (j) => ({ ...settings, walkMin: j.walkMin, leaveAt: j.leaveAt });
 
@@ -362,7 +403,7 @@ function watchStatus() {
   if (prev === null && s.level === 'good') return;
   if (s.level === 'good') say('✨ Hat düzeldi', 'Elizabeth line yeniden iyi serviste. Plan normale döndü.', 'Plan normale döndü');
   else say(`${s.level === 'minor' ? '😿' : '🚨'} Hat: ${LEVEL_TEXT[s.level]}`, s.reason || s.desc, 'Detay için tıkla');
-  nextBike = 0; // hat bozulduysa bisiklet seçeneğini hemen tazele
+  nextPlans = 0; // hat bozulduysa B planını ve bisikleti hemen tazele
 }
 
 // ------------------------------------------------------------------ çizim
@@ -397,6 +438,15 @@ function pillModel(now) {
   }
 
   const p = currentPlan(now, j);
+  const b = currentAlt(now, p);
+  if (b?.needed) {
+    // Elizabeth line yok ya da işe yaramıyor: en mantıklı başka hat.
+    const mins = (b.alt.leaveAt - now) / MIN;
+    const sub = `🔀 ${b.alt.lines.join(' → ')} · ${fmtTime(b.alt.arrive)} varış`;
+    return mins > 1
+      ? { headline: `${atTime(b.alt.leaveAt)} çık`, sub, badge: fmtDuration(Math.ceil(mins)), badgeClass: mins < 3 ? 's-now' : 's-relaxed', kind: 'worried', plan: p }
+      : { headline: 'Şimdi çık 🎒', sub, kind: 'alert', plan: p };
+  }
   if (!p) {
     return state.error
       ? { headline: 'Bağlantı yok 📡', sub: state.error, kind: 'sleepy' }
@@ -527,6 +577,7 @@ function renderMain(now, m) {
   const tip = p ? insight(p) : '';
   $('insight').hidden = !tip;
   setText($('insight'), tip ? `💡 ${tip}` : '');
+  renderPlanB(now, p);
   renderBike(now, j);
 
   const rows = (p?.list || []).slice(0, 6).map((t) => `
@@ -548,8 +599,19 @@ function renderMain(now, m) {
   setText($('updated'), parts.join(' · '));
 }
 
+function renderPlanB(now, p) {
+  const a = currentAlt(now, p);
+  const show = a && (a.needed || a.fasterBy >= 5);
+  $('alt').hidden = !show;
+  if (!show) return;
+  const { alt } = a;
+  setText($('alt-title'), `🔀 B planı: ${alt.lines.join(' → ')}`);
+  const why = a.needed ? 'Elizabeth line yerine' : `Elizabeth'ten ${a.fasterBy} dk erken`;
+  setText($('alt-sub'), `${atTime(alt.leaveAt)} çık · ${fmtTime(alt.arrive)} varış · ${why}`);
+}
+
 function renderBike(now, j) {
-  const b = state.bike;
+  const b = state.plans;
   const v = currentBike(now);
   const card = $('bike');
   card.hidden = !settings.bike || !configured() || (!v && !b?.error);
@@ -758,7 +820,7 @@ form.addEventListener('submit', (e) => {
   if (invoke) call('autostart', { enable: form.autostart.checked });
   state.journeyKey = '';
   state.error = '';
-  state.bike = null;
+  state.plans = null;
   nextLocate = 0;
   setView('main');
 });
@@ -771,7 +833,7 @@ $('btn-quit').addEventListener('click', () => call('quit'));
 let nextArrivals = 0;
 let nextStatus = 0;
 let nextLocate = 0;
-let nextBike = 0;
+let nextPlans = 0;
 let nextLime = 0;
 
 function tick() {
@@ -782,7 +844,7 @@ function tick() {
     state.journeyKey = key;
     tracker = new Tracker();
     nextArrivals = 0;
-    nextBike = 0;
+    nextPlans = 0;
   }
   const watching = configured() && (isLive(now) || state.view !== 'pill');
   if (configured() && settings.useLocation && now >= nextLocate) {
@@ -797,9 +859,11 @@ function tick() {
     nextStatus = now + (watching ? 2 : 10) * MIN;
     refreshStatus();
   }
-  if (settings.bike && watching && now >= nextBike && (state.arr || state.error)) {
-    nextBike = now + 10 * MIN;
-    refreshBike();
+  if (watching && now >= nextPlans && (state.arr || state.error)) {
+    // Elizabeth line sorunluyken B planını daha sık tazele.
+    const shaky = ['bad', 'closed'].includes(state.status?.level) || (state.arr && !currentPlan(now)?.list.length);
+    nextPlans = now + (shaky ? 3 : 10) * MIN;
+    refreshPlans();
   }
   if (settings.bike && state.view === 'main' && state.pos && now >= nextLime) {
     nextLime = now + 3 * MIN;

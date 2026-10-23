@@ -297,6 +297,12 @@ h3 small { font-weight: 600; color: var(--muted); }
   border-left: 4px solid var(--bike);
 }
 .bike.suggest { background: var(--bike-soft); }
+.alt {
+  padding: 9px 11px;
+  border-radius: 14px;
+  background: var(--lilac);
+  border-left: 4px solid var(--purple);
+}
 .bike-title { font-weight: 900; font-size: 12.5px; }
 .bike-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
 .bike-sub:empty { display: none; }
