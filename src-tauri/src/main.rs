@@ -30,6 +30,8 @@ struct Placement {
     dirty: AtomicBool,
     expanded: AtomicBool,
     restored: AtomicBool,
+    // Panel ekrana sığsın diye pencereyi ne kadar ittik; kapanınca geri alınır ki hap kaymasın.
+    nudge: Mutex<(i32, i32)>,
 }
 
 fn placement_file(app: &AppHandle) -> Option<PathBuf> {
@@ -62,10 +64,15 @@ fn save_placement_loop(app: AppHandle) {
     }
 }
 
+fn allowed(url: &str) -> bool {
+    ALLOWED.iter().any(|prefix| url.starts_with(prefix))
+}
+
 // Webview'den fetch başarısız olursa (CORS, kurumsal proxy vb.) buradan gidilir.
+// allow300: TfL rota planlayıcısının "şunlardan hangisi?" listesi istenen veriyse.
 #[tauri::command]
-async fn http_get(url: String) -> Result<String, String> {
-    if !ALLOWED.iter().any(|prefix| url.starts_with(prefix)) {
+async fn http_get(url: String, allow300: Option<bool>) -> Result<String, String> {
+    if !allowed(&url) {
         return Err("izin verilmeyen adres".into());
     }
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -73,14 +80,21 @@ async fn http_get(url: String) -> Result<String, String> {
         reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
             .user_agent("Lizzie/0.1")
+            // Yönlendirmeler de yalnızca izinli adreslere gidebilir.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() < 5 && allowed(attempt.url().as_str()) {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
             .build()
             .expect("http istemcisi")
     });
     let res = client.get(&url).send().await.map_err(err)?;
     let status = res.status();
     let body = res.text().await.map_err(err)?;
-    // 300: TfL rota planlayıcısının "şunlardan hangisi?" listesi, o da veri.
-    if status.is_success() || status.as_u16() == 300 {
+    if status.is_success() || (allow300.unwrap_or(false) && status.as_u16() == 300) {
         Ok(body)
     } else {
         Err(format!("HTTP {}", status.as_u16()))
@@ -170,10 +184,9 @@ fn resize(
     grow_up: bool,
     grow_left: bool,
 ) -> Result<(), String> {
-    window
-        .state::<Placement>()
-        .expanded
-        .store(height > 120.0, Ordering::SeqCst);
+    let placement = window.state::<Placement>();
+    let expanding = height > 120.0;
+    let was_expanded = placement.expanded.swap(expanding, Ordering::SeqCst);
     let scale = window.scale_factor().map_err(err)?;
     let pos = window.outer_position().map_err(err)?;
     let size = window.outer_size().map_err(err)?;
@@ -191,6 +204,14 @@ fn resize(
     } else {
         pos.y
     };
+    // Kapanırken açılışta yaptığımız itmeyi geri al: hap tam eski yerine dönsün.
+    let mut nudge = placement.nudge.lock().unwrap();
+    if was_expanded && !expanding {
+        x -= nudge.0;
+        y -= nudge.1;
+        *nudge = (0, 0);
+    }
+    let (want_x, want_y) = (x, y);
     if let Some(a) = window
         .current_monitor()
         .map_err(err)?
@@ -203,6 +224,11 @@ fn resize(
             .min(a.position.y + a.size.height as i32 - new_h)
             .max(a.position.y);
     }
+    if expanding {
+        nudge.0 += x - want_x;
+        nudge.1 += y - want_y;
+    }
+    drop(nudge);
     let new_pos = PhysicalPosition::new(x, y);
     let new_size = LogicalSize::new(width, height);
     // Büyürken önce taşı, küçülürken önce boyutla: pencere bir an bile ekrandan taşmasın.

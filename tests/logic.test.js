@@ -4,7 +4,7 @@ import {
   buildRoutes, trainsForTrip, stationsFromStopPoints, nameIndex, cleanStationName,
   parseStatus, plan, insight, locSuffix, atTime, dayMode, Tracker, MIN, DEFAULTS,
   chooseTrip, distanceM, walkMinutes, bestJourney, bikeVerdict, nearbyVehicles,
-  bestAlternative, planBNeeded, journeySteps, placeOptions, nearestStation,
+  bestAlternative, planBNeeded, journeySteps, placeOptions, nearestStation, byBound,
 } from '../src/logic.js';
 import { routeSequenceEast, routeSequenceBranchesOnly, stopPoints, arrivalsAtBondStreet } from './fixtures.js';
 
@@ -351,4 +351,39 @@ test('konum: ev adresine yakınsan evdesin, tarif kapıya kadar', () => {
   assert.deepEqual(m.fromPlace, s.work);
   assert.deepEqual(m.toPlace, s.home);
   assert.ok(m.walkMin >= 4 && m.walkMin <= 8, String(m.walkMin));
+});
+
+// ------------------------------------------------------------------ inceleme düzeltmeleri
+
+test('takipçi: masada kalırsan tren "iptal" sayılmaz, sessizce sıradakine geçer', () => {
+  const tr = new Tracker();
+  const poll = (now) => tr.update(plan([train(18, 7, 'Abbey Wood', 'V1'), train(18, 14, 'Abbey Wood', 'V2')], now, settings), now);
+  assert.deepEqual(poll(at(17, 58)), []); // hedef 18:07 (17:59'da çık)
+  assert.deepEqual(poll(at(18, 0, 30)), []); // çıkmadın: 18:07 artık yetişilemez
+  assert.deepEqual(poll(at(18, 1)), []); // "düştü" ya da "gecikti" yok
+  assert.equal(tr.cur.vehicleId, 'V2');
+});
+
+test('plan: yetişilemeyen trenler de "all" içinde', () => {
+  const p = plan([train(18, 2), train(18, 20)], at(18, 0), settings);
+  assert.deepEqual(p.all.map((t) => t.state), ['missed', 'relaxed']);
+  assert.equal(p.list.length, 1);
+});
+
+test('gece "Service Closed" arıza değildir', () => {
+  const night = parseStatus([{ id: 'elizabeth', lineStatuses: [{ statusSeverity: 20, statusSeverityDescription: 'Service Closed' }] }]);
+  assert.equal(night.level, 'night');
+  const mixed = parseStatus([{ id: 'elizabeth', lineStatuses: [{ statusSeverity: 20 }, { statusSeverity: 9, reason: 'x' }] }]);
+  assert.equal(mixed.level, 'minor');
+  assert.equal(planBNeeded({ alt: { arrive: 1 }, level: 'night', hasTrains: true }), false);
+});
+
+test('rota yokken yön perondan: Eastbound / Westbound', () => {
+  const t = (bound) => ({ ...train(18, 7), bound });
+  assert.equal(byBound([t('east'), t('west'), t('east')], true).trains.length, 2);
+  assert.equal(byBound([t('east'), t('west')], false).trains[0].bound, 'west');
+  assert.deepEqual(byBound([t(''), t('')], true), { trains: [t(''), t('')], sure: false });
+  const base = at(17, 50);
+  const r = trainsForTrip(arrivalsAtBondStreet(base), { fromId: '910GBONDST', toId: '910GWOLWXR', routes: [] });
+  assert.ok(r.unknown.some((x) => x.bound === 'west') && r.unknown.some((x) => x.bound === 'east'));
 });

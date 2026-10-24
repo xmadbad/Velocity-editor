@@ -2,7 +2,7 @@
 import {
   BIKE_OVERHEAD_MIN, DEFAULTS, LEVEL_TEXT, MAX_ACCURACY_M, MIN, Tracker, atTime, atToday,
   bestAlternative, bestJourney, bikeVerdict, buildRoutes, nearestStation, parseHHMM, placeOptions,
-  planBNeeded, walkMinutes, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
+  planBNeeded, walkMinutes, byBound, chooseTrip, dayMode, fmtDuration, fmtTime, insight,
   nameIndex, nearbyVehicles, parseStatus, plan, stationsFromStopPoints, trainsForTrip,
 } from './logic.js';
 import { FACE_SVG, MINI_TRAIN } from './face.js';
@@ -50,7 +50,7 @@ function loadSettings() {
     // ilk sürümde "nereden/nereye" vardı: iş → ev
     Object.assign(saved, { workId: saved.fromId, workName: saved.fromName, homeId: saved.toId, homeName: saved.toName });
   }
-  delete saved.homePostcode; // yerini ev adresi aldı
+  if (saved.home) delete saved.homePostcode; // yerini ev adresi aldı
   return { ...DEFAULTS, ...saved };
 }
 
@@ -89,7 +89,7 @@ async function getJSON(url, label, { allow300 = false } = {}) {
     return await res.json();
   } catch (e) {
     if (e.http || !invoke) throw e;
-    return JSON.parse(await invoke('http_get', { url })); // webview'den olmadıysa Rust'tan dene
+    return JSON.parse(await invoke('http_get', { url, allow300 })); // webview'den olmadıysa Rust'tan dene
   }
 }
 
@@ -184,10 +184,19 @@ async function refreshLocation() {
 }
 
 // Şu an nereden nereye: konuma (ya da saate) göre seçilen yolculuk.
+// Saniyede bir kez hesaplanır: her çizim yolu aynı yolculuğu görür, "yapışkan durak"
+// da çağrı sayısına göre değil zamana göre güncellenir.
+let journeyMemo = null;
 function journey(now = Date.now()) {
+  const sec = Math.floor(now / 1000);
+  const m = journeyMemo;
+  if (m && m.sec === sec && m.settings === settings && m.posAt === state.posAt && m.stations === state.stations && m.routes === state.routes) {
+    return m.j;
+  }
   const fresh = settings.useLocation && state.pos && now - state.posAt < 30 * MIN;
   const j = chooseTrip({ pos: fresh ? state.pos : null, stations: state.stations, routes: state.routes, settings, now, prevFromId: state.fromId });
   state.fromId = j.from.id;
+  journeyMemo = { sec, settings, posAt: state.posAt, stations: state.stations, routes: state.routes, j };
   return j;
 }
 const journeyKey = (j) => `${j.from.id}>${j.to?.id || ''}`;
@@ -236,7 +245,7 @@ async function refreshPlans() {
     info.alt = bestAlternative(other);
     info.bikeMin = bike ? bike.duration + BIKE_OVERHEAD_MIN : NaN;
     if (failure && !rail && !other && !cycle) {
-      info.error = /HTTP 300/.test(String(failure.message)) ? 'TfL posta kodunu tanımadı' : friendlyError(failure);
+      info.error = /HTTP 300/.test(String(failure?.message || failure)) ? 'TfL adresi tanımadı' : friendlyError(failure);
     }
   } finally {
     state.plans = info;
@@ -265,7 +274,7 @@ function currentAlt(now = Date.now(), p = currentPlan(now)) {
   const needed = planBNeeded({
     alt,
     level: state.status?.level,
-    hasTrains: Boolean(p?.list.length),
+    hasTrains: Boolean(p?.all.length),
     early: Boolean(p?.early),
     trainArrive: pl.trainArrive,
   });
@@ -302,15 +311,16 @@ function watchPlanB() {
   const troubled = ['bad', 'closed'].includes(state.status?.level);
   const bike = v?.suggest && troubled ? v : null;
   if (!a?.needed && !bike) return;
-  if (!once(`planb:${today(now)}`)) return;
-  const where = journey(now).dir === 'work' ? 'İşe' : 'Eve';
+  const dir = journey(now).dir;
+  if (!once(`planb:${dir}:${today(now)}`)) return;
+  const [where, whereLow] = dir === 'work' ? ['İşe', 'işe'] : ['Eve', 'eve'];
   if (a?.needed) {
     const { alt } = a;
     const extra = bike ? ` Lime/Voi ile ~${bike.bikeMin} dk.` : '';
     say(`🔀 ${alt.lines.join(' → ')}`, `Elizabeth line'a güvenme. ${atTime(alt.leaveAt)} çık, ${fmtTime(alt.arrive)} gibi ${where === 'Eve' ? 'evdesin' : 'iştesin'}.${extra}`, `${atTime(alt.leaveAt)} çık · ${fmtTime(alt.arrive)} varış`);
   } else {
     const train = Number.isFinite(bike.trainMin) ? `, trenle ~${bike.trainMin} dk` : '';
-    say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${bike.bikeMin} dk${train}.`, `Hat sorunlu · ${where.toLowerCase()} ~${bike.bikeMin} dk`);
+    say('🚲 Lime/Voi alternatifi', `Hat sorunlu. ${where} e-bisikletle ~${bike.bikeMin} dk${train}.`, `Hat sorunlu · ${whereLow} ~${bike.bikeMin} dk`);
   }
 }
 const tripSettings = (j) => ({ ...settings, walkMin: j.walkMin, leaveAt: j.leaveAt });
@@ -329,19 +339,32 @@ function whereText(j) {
 
 function friendlyError(e) {
   const msg = String(e?.message || e);
-  if (/429/.test(msg)) return 'TfL biraz yoruldu, birazdan tekrar denerim';
+  if (/HTTP 429/.test(msg)) return 'TfL biraz yoruldu, birazdan tekrar denerim';
   if (/HTTP/.test(msg)) return msg;
   return 'İnternete ulaşamadım';
 }
 
 // ------------------------------------------------------------------ plan ve haberler
 
+// uncertain: TfL rota bilgisi trenleri eşleştiremedi. sure: yine de yön peron adından
+// belli (Eastbound/Westbound). Yön de belli değilse hatırlatma ve uyarı gönderilmez.
 function currentPlan(now = Date.now(), j = journey(now)) {
   const arr = state.arr;
   if (!arr || arr.key !== journeyKey(j)) return null;
-  const uncertain = !arr.trains.length && arr.unknown.length > 0;
-  return { ...plan(uncertain ? arr.unknown : arr.trains, now, tripSettings(j)), uncertain };
+  let trains = arr.trains;
+  let uncertain = false;
+  let sure = true;
+  if (!trains.length && arr.unknown.length) {
+    uncertain = true;
+    const a = state.stations.find((s) => s.id === j.from.id);
+    const b = state.stations.find((s) => s.id === j.to?.id);
+    ({ trains, sure } = a && b && Number.isFinite(a.lon) && Number.isFinite(b.lon)
+      ? byBound(arr.unknown, b.lon > a.lon)
+      : { trains: arr.unknown, sure: false });
+  }
+  return { ...plan(trains, now, tripSettings(j)), uncertain, sure };
 }
+const trusted = (p) => p && !(p.uncertain && !p.sure);
 
 const isLive = (now = Date.now()) => configured() && dayMode(now, tripSettings(journey(now))) === 'live';
 const today = (now = Date.now()) => new Date(now).toDateString();
@@ -375,6 +398,7 @@ function watchForChanges() {
   const now = Date.now();
   if (!isLive(now)) return;
   const p = currentPlan(now);
+  if (!trusted(p)) return; // yolculuk az önce değişti ya da yön belirsiz
   for (const ev of tracker.update(p, now)) {
     if (ev.type === 'shift' && ev.delta > 0) {
       say(`😿 Trenin ${ev.delta} dk gecikti`, `${fmtTime(ev.from.base)} treni artık ${fmtTime(ev.to.time)} görünüyor. ${planLine(p)}`, `${fmtTime(ev.from.base)} → ${fmtTime(ev.to.time)} · ${planShort(p)}`);
@@ -388,7 +412,7 @@ function watchForChanges() {
 
 function watchReminders(p, now) {
   const t = p?.target;
-  if (!t || !isLive(now) || now < p.L - 45 * MIN) return;
+  if (!t || !trusted(p) || !isLive(now) || now < p.L - 45 * MIN) return;
   const day = `${journey(now).dir}:${today(now)}`;
   const remindMin = Number(settings.remindMin) || 0;
   if (remindMin > 1 && t.slack <= remindMin && t.slack > 1.5 && once(`remind:${day}`)) {
@@ -402,7 +426,7 @@ function watchReminders(p, now) {
 
 function watchStatus() {
   const s = state.status;
-  if (!s || s.level === 'unknown' || !isLive()) return;
+  if (!s || s.level === 'unknown' || s.level === 'night' || !isLive()) return;
   const key = `status:${today()}`;
   const prev = store.get(key, null);
   if (prev === s.level) return;
@@ -464,6 +488,14 @@ function pillModel(now) {
   if (!t) {
     if (p.early) {
       return { headline: `${goal} ${fmtTime(L)}`, sub: 'Tahminler birazdan gelir', badge: shortDuration((L - now) / MIN), badgeClass: 's-idle', kind: 'calm', plan: p };
+    }
+    // Tren var ama yürüyüşün canlı tahminlerden uzun: rota planlayıcısının trenini söyle.
+    const rail = freshPlans(now)?.rail;
+    if (p.all.length && rail && rail.leaveAt > now) {
+      const mins = (rail.leaveAt - now) / MIN;
+      const ride = rail.steps.find((s) => s.kind === 'ride');
+      const sub = `🧭 ${ride ? `${fmtTime(ride.dep)} → ${ride.direction || ride.to} · ` : ''}${fmtTime(rail.arrival)} varış`;
+      return { headline: `${atTime(rail.leaveAt)} çık`, sub, badge: shortDuration(mins), badgeClass: mins < 3 ? 's-now' : 's-relaxed', kind: 'calm', plan: p };
     }
     const v = currentBike(now);
     const sub = v ? `🚲 Lime/Voi ile ~${v.bikeMin} dk` : state.error || statusLine;
@@ -600,7 +632,9 @@ function renderMain(now, m) {
   setHTML($('trains'), rows.length ? rows.join('') : `<li class="empty">${esc(empty)}</li>`);
 
   $('note').hidden = !p?.uncertain;
-  setText($('note'), p?.uncertain ? '⚠ Rota bilgisi eşleşmedi, bu duraktaki tüm trenleri gösteriyorum.' : '');
+  setText($('note'), !p?.uncertain ? ''
+    : p.sure ? '⚠ TfL rota bilgisi yok; yönü peron adından tahmin ettim.'
+    : '⚠ TfL rota bilgisi yok; bu duraktaki tüm trenleri gösteriyorum, hatırlatma göndermiyorum.');
 
   const parts = [];
   if (state.fetchedAt) parts.push(`↻ ${ago(now - state.fetchedAt)}`);
@@ -623,10 +657,16 @@ function renderRoute(now, p, j) {
   const target = !useAlt && p?.target;
   const steps = r.steps.map((s) => ({ ...s }));
   const first = steps.find((s) => s.kind === 'ride');
-  if (target && first?.mode === 'elizabeth-line' && first.from === j.from.name) first.dep = target.time;
+  let shift = 0; // canlı tren, planlayıcının treninden bu kadar sonra/önce
+  if (target && first?.mode === 'elizabeth-line' && first.from === j.from.name && Number.isFinite(first.dep)) {
+    shift = target.time - first.dep;
+    for (const s of steps.slice(steps.indexOf(first))) {
+      if (s.kind === 'ride') Object.assign(s, { dep: s.dep + shift, arr: s.arr + shift });
+    }
+  }
   const leaveAt = target ? target.leaveBy : r.leaveAt;
 
-  setText($('route-title'), `${useAlt ? '🔀 B planı' : '🧭 Yol tarifi'} · ${atTime(leaveAt)} çık · ${fmtTime(r.arrive)} varış`);
+  setText($('route-title'), `${useAlt ? '🔀 B planı' : '🧭 Yol tarifi'} · ${atTime(leaveAt)} çık · ${fmtTime(r.arrive + shift)} varış`);
   setText($('route-why'), useAlt ? (a.needed ? "Elizabeth line'a güvenme" : `Elizabeth'ten ${a.fasterBy} dk erken`) : '');
   const dest = j.toPlace ? (j.dir === 'work' ? 'iş' : 'ev') : '';
   setHTML($('steps'), steps.map((s, i) => {
@@ -784,9 +824,11 @@ function showPicked(kind) {
   const p = picked[kind];
   const el = placeBox(kind).querySelector('.picked');
   const st = p && nearestStation(p, state.stations);
+  const station = kind === 'home' ? settings.homeName : settings.workName;
   el.classList.toggle('ok', Boolean(p));
-  el.textContent = !p ? 'Yaz ve Enter’a bas ya da oradayken 📍'
-    : st ? `✓ En yakın durak ${st.name}, ~${walkMinutes(st.d)} dk yürüme` : `✓ ${p.label}`;
+  el.textContent = p ? (st ? `✓ En yakın durak ${st.name}, ~${walkMinutes(st.d)} dk yürüme` : `✓ ${p.label}`)
+    : station ? `Şimdilik durak: ${station} · adres için yaz + Enter ya da 📍`
+    : 'Yaz ve Enter’a bas ya da oradayken 📍';
 }
 
 function pickPlace(kind, place) {
@@ -825,7 +867,10 @@ async function searchPlace(kind) {
 async function pickHere(kind) {
   if (!invoke) return formError('Konum yalnızca uygulamada çalışır');
   try {
-    const [lat, lon] = await invoke('locate');
+    const [lat, lon, accuracy] = await invoke('locate');
+    if (accuracy > 500) {
+      return formError(`Konum çok bulanık (±${(accuracy / 1000).toFixed(1)} km); adresi ya da posta kodunu yaz 🙏`);
+    }
     if (!state.stations.length) await ensureStations().catch(() => {});
     const st = nearestStation({ lat, lon }, state.stations);
     pickPlace(kind, { label: st ? `Konumum (${st.name} yakını)` : 'Konumum', lat, lon });
@@ -860,13 +905,15 @@ function fillSettings() {
   fillStationList();
   for (const kind of ['home', 'work']) {
     picked[kind] = settings[kind];
-    placeBox(kind).querySelector('input').value = settings[kind]?.label || '';
+    placeBox(kind).querySelector('input').value = settings[kind]?.label || (kind === 'home' && settings.homePostcode) || '';
     placeBox(kind).querySelector('.results').hidden = true;
     showPicked(kind);
   }
   // Adres seçilmemişse (eski kurulum) ya da durak elle sabitlendiyse Gelişmiş'te görünsün.
-  form.homeStation.value = settings.homeFixed || !settings.home ? settings.homeName : '';
-  form.workStation.value = settings.workFixed || !settings.work ? settings.workName : '';
+  // Gelişmiş'teki durak alanı yalnızca elle sabitlenmişse dolu gelir.
+  form.homeStation.value = settings.homeFixed ? settings.homeName : '';
+  form.workStation.value = settings.workFixed ? settings.workName : '';
+  ensureRoutes().catch(() => {}); // durak seçerken "aktarmasız" tercihi için
   form.useLocation.checked = settings.useLocation;
   form.useLocation.disabled = !invoke;
   form.bike.checked = settings.bike;
@@ -907,21 +954,24 @@ function findStation(text) {
 
 const clamp = (n, lo, hi, fallback) => (Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback);
 
-form.addEventListener('submit', (e) => {
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!state.stations.length) return formError('İstasyon listesi henüz gelmedi, birazdan tekrar dene.');
+  await ensureRoutes().catch(() => {}); // aktarmasız durak tercihi rota bilgisine dayanır
   const fixed = (input) => (input.value.trim() ? findStation(input.value) : null);
   const homeFixed = fixed(form.homeStation);
   const workFixed = fixed(form.workStation);
   if ((form.homeStation.value.trim() && !homeFixed) || (form.workStation.value.trim() && !workFixed)) {
     return formError('Durağı listeden seç ya da boş bırak 🙏');
   }
-  if (!picked.home && !homeFixed) return formError('Evini seç 🏡 (yaz + Enter ya da 📍)');
-  if (!picked.work && !workFixed) return formError('İş yerini seç 💼 (yaz + Enter ya da 📍)');
+  // Adres seçilmediyse (eski kurulum) kayıtlı durak geçerli kalır.
+  const saved = (kind) => (settings[`${kind}Id`] ? { id: settings[`${kind}Id`], name: settings[`${kind}Name`] } : null);
+  if (!picked.home && !homeFixed && !saved('home')) return formError('Evini seç 🏡 (yaz + Enter ya da 📍)');
+  if (!picked.work && !workFixed && !saved('work')) return formError('İş yerini seç 💼 (yaz + Enter ya da 📍)');
   // Duraklar adresten: birbirine aktarmasız giden en yakın Elizabeth line durakları.
   const opts = (towardsId) => ({ routes: state.routes, towardsId });
-  let work = workFixed || nearestStation(picked.work, state.stations);
-  const home = homeFixed || nearestStation(picked.home, state.stations, opts(work?.id));
+  let work = workFixed || (picked.work ? nearestStation(picked.work, state.stations) : saved('work'));
+  const home = homeFixed || (picked.home ? nearestStation(picked.home, state.stations, opts(work?.id)) : saved('home'));
   if (!workFixed && picked.work) work = nearestStation(picked.work, state.stations, opts(home?.id));
   if (!work || !home) return formError('Durak listesi gelmedi, birazdan tekrar dene.');
   if (work.id === home.id) return formError('Ev ve iş aynı durağa düşüyor 🙂');
@@ -937,6 +987,7 @@ form.addEventListener('submit', (e) => {
     work: picked.work,
     homeFixed: Boolean(homeFixed),
     workFixed: Boolean(workFixed),
+    homePostcode: picked.home ? undefined : settings.homePostcode,
     useLocation: form.useLocation.checked,
     walkMin: clamp(parseInt(form.walk.value, 10), 0, 90, DEFAULTS.walkMin),
     leaveAt: form.leave.value || DEFAULTS.leaveAt,

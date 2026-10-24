@@ -126,6 +126,7 @@ export function trainsForTrip(predictions, { fromId, toId, routes = [], nameToId
       dest: dest || '?',
       destId,
       platform: cleanPlatform(p.platformName),
+      bound: /east/i.test(p.platformName || '') ? 'east' : /west/i.test(p.platformName || '') ? 'west' : '',
     };
 
     const decidable = candidates.filter((id) => known.has(id));
@@ -150,15 +151,17 @@ const LEVEL_OF = {
   10: 'good', 18: 'good', 19: 'good', 12: 'good', 13: 'good',
   0: 'minor', 7: 'minor', 9: 'minor', 14: 'minor', 15: 'minor', 17: 'minor',
   3: 'bad', 5: 'bad', 6: 'bad', 8: 'bad', 11: 'bad',
-  1: 'closed', 2: 'closed', 4: 'closed', 16: 'closed', 20: 'closed',
+  1: 'closed', 2: 'closed', 4: 'closed', 16: 'closed',
+  20: 'night', // "Service Closed": gece seferler bitti, arıza değil
 };
-const RANK = { good: 0, minor: 1, bad: 2, closed: 3 };
+const RANK = { good: 0, night: 0, minor: 1, bad: 2, closed: 3 };
 
 export const LEVEL_TEXT = {
   good: 'İyi servis',
   minor: 'Küçük aksaklıklar',
   bad: 'Ciddi aksaklık',
   closed: 'Kapalı / durduruldu',
+  night: 'Gece seferi yok',
   unknown: 'Durum bilinmiyor',
 };
 
@@ -183,6 +186,7 @@ export function parseStatus(resp) {
       descs.push(s.statusSeverityDescription);
     }
   }
+  if (statuses.every((s) => LEVEL_OF[s.statusSeverity] === 'night')) level = 'night';
   return { level, desc: descs.join(' + ') || LEVEL_TEXT[level], reason: tidyReason(reason) };
 }
 
@@ -289,13 +293,13 @@ export function dayMode(now, s) {
 export function plan(trains, now, s) {
   const walk = (Number(s.walkMin) || 0) * MIN;
   const L = parseHHMM(s.leaveAt) ? atToday(now, s.leaveAt) : now;
-  const list = trains
-    .map((t) => {
-      const leaveBy = t.time - walk;
-      const slack = (leaveBy - now) / MIN;
-      return { ...t, leaveBy, slack, state: stateFor(slack) };
-    })
-    .filter((t) => t.state !== 'missed');
+  // all: tahmindeki bütün trenler (artık yetişemeyeceklerin de); list: yetişebileceklerin.
+  const all = trains.map((t) => {
+    const leaveBy = t.time - walk;
+    const slack = (leaveBy - now) / MIN;
+    return { ...t, leaveBy, slack, state: stateFor(slack) };
+  });
+  const list = all.filter((t) => t.state !== 'missed');
 
   const early = now < L - 3 * MIN;
   const target = early ? list.find((t) => t.leaveBy >= L - 3 * MIN) : list[0];
@@ -308,7 +312,7 @@ export function plan(trains, now, s) {
     if (train) atL = { train, platformAt, waitMin: (train.time - platformAt) / MIN };
   }
 
-  return { list, target, alt, atL, L, early };
+  return { all, list, target, alt, atL, L, early };
 }
 
 // "18:00'de çıksam olur mu?" sorusunun tek cümlelik cevabı.
@@ -548,13 +552,22 @@ export function bestAlternative(resp) {
 }
 
 // B planını öne çıkaralım mı? Hat kapalıysa, eve giden tren hiç görünmüyorsa ya da
-// ciddi aksaklıkta başka hat belirgin erken vardırıyorsa.
+// ciddi aksaklıkta başka hat belirgin erken vardırıyorsa. hasTrains: tahminde eve giden
+// herhangi bir tren var mı (yürüyüş uzun diye yetişilemeyenler de sayılır).
 export function planBNeeded({ alt, level, hasTrains, early, trainArrive }) {
   if (!alt) return false;
   if (level === 'closed') return true;
   if (!hasTrains && !early) return true;
   if (level === 'bad') return !Number.isFinite(trainArrive) || alt.arrive <= trainArrive - 2 * MIN;
   return false;
+}
+
+// Rota bilgisi yokken (TfL vermediyse) en azından yönü tut: peron adı "Eastbound/
+// Westbound" diyorsa gideceğin yöne bakanları al. Yön bilgisi hiç yoksa liste olduğu gibi.
+export function byBound(trains, east) {
+  const known = trains.filter((t) => t.bound);
+  if (!known.length) return { trains, sure: false };
+  return { trains: known.filter((t) => t.bound === (east ? 'east' : 'west')), sure: true };
 }
 
 // ---------------------------------------------------------------- değişiklik takibi
@@ -578,9 +591,14 @@ export class Tracker {
       return events;
     }
 
-    const match = findMatch(p.list, cur);
+    // Yetişemeyeceğin trenler de aranır: masada kaldın diye tren "iptal" sayılmasın.
+    const match = findMatch(p.all || p.list, cur);
     if (match) {
       this.missing = 0;
+      if (match.state === 'missed') {
+        this.cur = fresh(p.target); // bu trene çıkmadın: sessizce sıradakine geç
+        return events;
+      }
       const delta = Math.round((match.time - cur.base) / MIN);
       if (Math.abs(delta) >= 2) {
         events.push({ type: 'shift', from: { ...cur }, to: match, delta });

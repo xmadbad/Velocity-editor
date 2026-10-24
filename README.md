@@ -33,8 +33,8 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
   günlerde başka yol 5+ dk daha hızlıysa bunu panelde gösterir.
 - **Lime / Voi e-bisiklet:** Aynı çıkış saati için e-bisikletle (TfL'nin bisiklet
   rotası, "hızlı" sürücü + 4 dk bisikleti bulma/park payı) ve trenle kapıdan kapıya
-  süreyi kıyaslar. Hat sorunluysa hap ve bildirim "Lime/Voi ile eve ~31 dk" der. Ev posta
-  kodunu yazarsan süre kapına kadar hesaplanır. Lime ve Voi, Londra'daki araçlarının canlı
+  süreyi kıyaslar. Hat sorunluysa hap ve bildirim "Lime/Voi ile eve ~31 dk" der. Ev
+  adresini seçtiysen süre kapına kadar hesaplanır. Lime ve Voi, Londra'daki araçlarının canlı
   konumunu herkese açık yayınlamıyor. Lime'ın şehir akışı Londra için de açılırsa yakındaki
   Lime bisikletlerini de gösterir, açık değilse bu satır görünmez.
 - **Doğru trenler:** Yalnızca senin durağında da duran trenleri sayar (Abbey Wood /
@@ -45,8 +45,9 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
 - **Yer kaplamaz:** 264×72 px, en fazla 2 satırlık bir hap. Tıklayınca panel açılır, başka yere
   tıklayınca küçülür. Sürükleyip istediğin köşeye koyabilirsin, yerini hatırlar.
   Tepsi simgesinden gizleyip açabilirsin.
-- **Tatlıdır:** Lizzie'nin yüzü duruma göre değişir: her şey yolundayken gülümser,
-  gecikmede terler, ciddi sorunda ağlar, mesai dışında uyur 😴.
+- **Sade bir yüz:** Lizzie'nin yüzü yalnızca göz ve ağızla konuşur: her şey yolundayken
+  ^^ gülümser, "şimdi çık"ta ağzı açılır, aksaklıkta düz, ciddi sorunda üzgün, mesai
+  dışında gözleri kapalıdır. Köşedeki nokta hattın durumu (yeşil / turuncu / kırmızı).
 
 Zaman çizelgesi (panelde): soldaki 🚪 "şimdi çıkman gerek" anlamına gelir.
 Trenler, onlara yetişmek için çıkman gereken ana göre dizilir ve zaman geçtikçe kapıya
