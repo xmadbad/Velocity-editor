@@ -643,41 +643,47 @@ function renderMain(now, m) {
   setText($('updated'), parts.join(' · '));
 }
 
-// Önerilen yolun adım adım tarifi: Elizabeth line'la ya da (gerekiyorsa) B planıyla.
+// Önerilen yolun tek satırlık özeti; adım adım tarifi Citymapper'a bırakırız.
 function renderRoute(now, p, j) {
+  const card = $('route-card');
+  card.hidden = !configured() || !j.to;
+  if (card.hidden) return;
+  $('btn-citymapper').dataset.url = citymapperUrl(j);
+
   const pl = freshPlans(now);
   const a = currentAlt(now, p);
   const useAlt = a && (a.needed || a.fasterBy >= 5);
   const r = useAlt ? a.alt : pl?.rail && { ...pl.rail, arrive: pl.rail.arrival };
-  $('route-card').hidden = !r?.steps?.length;
-  if ($('route-card').hidden) return;
-  $('route-card').classList.toggle('alt', Boolean(useAlt));
-
-  // Elizabeth line ile gidiyorsak ilk binişi canlı tahmindeki hedef trenle eşitle.
-  const target = !useAlt && p?.target;
-  const steps = r.steps.map((s) => ({ ...s }));
-  const first = steps.find((s) => s.kind === 'ride');
-  let shift = 0; // canlı tren, planlayıcının treninden bu kadar sonra/önce
-  if (target && first?.mode === 'elizabeth-line' && first.from === j.from.name && Number.isFinite(first.dep)) {
-    shift = target.time - first.dep;
-    for (const s of steps.slice(steps.indexOf(first))) {
-      if (s.kind === 'ride') Object.assign(s, { dep: s.dep + shift, arr: s.arr + shift });
-    }
+  card.classList.toggle('alt', Boolean(useAlt));
+  if (!r) {
+    setText($('route-title'), `🧭 ${j.dir === 'work' ? 'İşe' : 'Eve'} yol tarifi`);
+    setText($('route-why'), '');
+    return;
   }
+  // Elizabeth line'la gidiyorsak saatleri canlı tahmindeki hedef trene göre kaydır.
+  const target = !useAlt && p?.target;
+  const rides = (r.steps || []).filter((s) => s.kind === 'ride');
+  const first = rides[0];
+  const shift = target && first?.mode === 'elizabeth-line' && first.from === j.from.name && Number.isFinite(first.dep)
+    ? target.time - first.dep : 0;
   const leaveAt = target ? target.leaveBy : r.leaveAt;
+  const lines = [...new Set(rides.map((s) => s.line))].join(' → ') || 'Elizabeth line';
+  setText($('route-title'), `${useAlt ? '🔀' : '🧭'} ${lines}`);
+  const why = !useAlt ? '' : a.needed ? ' · B planı' : ` · ${a.fasterBy} dk erken`;
+  setText($('route-why'), `${atTime(leaveAt)} çık · ${fmtTime(r.arrive + shift)} varış${why}`);
+}
 
-  setText($('route-title'), `${useAlt ? '🔀 B planı' : '🧭 Yol tarifi'} · ${atTime(leaveAt)} çık · ${fmtTime(r.arrive + shift)} varış`);
-  setText($('route-why'), useAlt ? (a.needed ? "Elizabeth line'a güvenme" : `Elizabeth'ten ${a.fasterBy} dk erken`) : '');
-  const dest = j.toPlace ? (j.dir === 'work' ? 'iş' : 'ev') : '';
-  setHTML($('steps'), steps.map((s, i) => {
-    if (s.kind === 'walk') {
-      const to = i === steps.length - 1 && dest ? dest : s.to;
-      return `<li class="walk"><i>🚶</i><span>${s.minutes} dk yürü${to ? ` → ${esc(to)}` : ''}</span></li>`;
-    }
-    const head = `<b>${s.transfer ? 'Aktar: ' : ''}${esc(s.line)}</b>${s.direction ? ` · ${esc(s.direction)} yönü` : ''}${s.disrupted ? ' ⚠️' : ''}`;
-    const detail = `Bin ${fmtTime(s.dep)} ${esc(s.from)} → İn ${fmtTime(s.arr)} ${esc(s.to)}${s.stops ? ` · ${s.stops} durak` : ''}`;
-    return `<li class="ride"><i>${s.icon}</i><span>${head}<br><small>${detail}</small></span></li>`;
-  }).join(''));
+// Citymapper'ın web yönlendirmesi: bulunduğun yerden (ya da iş/ev adresinden) gideceğin yere.
+function citymapperUrl(j) {
+  const coord = (pt) => `${pt.lat.toFixed(5)},${pt.lon.toFixed(5)}`;
+  const station = (id) => state.stations.find((s) => s.id === id && Number.isFinite(s.lat));
+  const here = j.source === 'location' && state.pos ? state.pos : j.fromPlace || station(j.from.id);
+  const dest = j.toPlace || station(j.to?.id);
+  const q = new URLSearchParams();
+  if (here) q.set('startcoord', coord(here));
+  if (dest) q.set('endcoord', coord(dest));
+  q.set('endname', j.toPlace ? (j.dir === 'work' ? 'İş' : 'Ev') : j.to?.name || '');
+  return `https://citymapper.com/directions?${q}`;
 }
 
 function renderBike(now, j) {
@@ -788,6 +794,11 @@ $('pill').addEventListener('pointerup', (e) => {
 
 $('btn-close').addEventListener('click', () => (invoke ? call('hide') : setView('pill')));
 $('btn-settings').addEventListener('click', () => setView('settings'));
+$('btn-citymapper').addEventListener('click', (e) => {
+  const url = e.currentTarget.dataset.url;
+  if (invoke) call('open_citymapper', { url });
+  else window.open(url, '_blank', 'noopener');
+});
 $('btn-refresh').addEventListener('click', () => {
   nextArrivals = 0;
   nextStatus = 0;

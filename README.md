@@ -23,9 +23,10 @@ sorunu olursa da hem widget'ta hem Windows bildirimiyle haber verir.
 - **Ev ve iş yeri:** Ayarlarda posta kodu, adres ya da durak yazıp Enter'a bas (TfL'de
   arar) ya da oradayken 📍'ya bas. En yakın Elizabeth line durakları kendiliğinden seçilir
   (istersen Gelişmiş'ten elle sabitlersin), süreler kapıdan kapıya hesaplanır.
-- **Adım adım tarif:** Panelde "🚶 6 dk yürü → Bond Street · 🟣 Elizabeth line, Abbey Wood
-  yönü: Bin 18:07 Bond Street → İn 18:26 Woolwich, 6 durak · 🚶 5 dk yürü → ev". B planı
-  gerekiyorsa aktarmalarıyla birlikte o yolu gösterir ("Aktar: DLR …").
+- **Yol tarifi Citymapper'da:** Panel yalnızca özeti verir ("🧭 Elizabeth line · 18:00'de
+  çık · 18:40 varış" ya da B planında "🔀 Jubilee → DLR · …"). **Citymapper ↗** düğmesi
+  bulunduğun yerden eve (ya da işe) adım adım tarifi Citymapper'da açar. Lizzie "kaçta çık"
+  işine odaklanır, yol bulmayı onda en iyi olana bırakır.
 - **Elizabeth yoksa B planı:** Hat kapalıysa, eve giden tren görünmüyorsa ya da ciddi
   aksaklıkta başka yol belirgin erken vardırıyorsa, TfL rota planlayıcısından Elizabeth
   line'sız en erken varan yolu (Tube, DLR, Overground, tren, otobüs) bulur. Hap

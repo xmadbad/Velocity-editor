@@ -145,6 +145,15 @@ fn locate_now() -> Result<[f64; 3], String> {
     Err("unsupported".into())
 }
 
+// Adım adım tarif için Citymapper'ı varsayılan tarayıcıda açar (yalnızca citymapper.com).
+#[tauri::command]
+fn open_citymapper(url: String) -> Result<(), String> {
+    if !url.starts_with("https://citymapper.com/") {
+        return Err("yalnızca citymapper.com".into());
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(err)
+}
+
 #[tauri::command]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
     app.notification()
@@ -400,6 +409,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             http_get,
             locate,
+            open_citymapper,
             notify,
             autostart,
             set_tooltip,
